@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batch Upload — B2B Prospecting Agent</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f9fafb; padding: 2rem; color: #111827; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        nav { margin-bottom: 1.5rem; display: flex; gap: 1.5rem; }
+        nav a { color: #2563eb; text-decoration: none; font-weight: 500; }
+        h1 { margin-top: 0; font-size: 1.4rem; }
+        .form-group { margin-bottom: 1.2rem; }
+        label { display: block; font-weight: 500; margin-bottom: 0.4rem; }
+        input[type="file"] { width: 100%; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 4px; background: #f9fafb; }
+        button { background: #2563eb; color: white; padding: 0.5rem 1.2rem; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; font-size: 1rem; }
+        button:hover { background: #1d4ed8; }
+        .hint { font-size: 0.8rem; color: #6b7280; margin-top: 0.4rem; }
+        .success { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 4px; padding: 1rem; color: #15803d; margin-top: 1rem; }
+        .error { background: #fef2f2; border: 1px solid #fecaca; border-radius: 4px; padding: 1rem; color: #dc2626; margin-top: 1rem; }
+        pre { background: #f3f4f6; padding: 0.75rem; border-radius: 4px; font-size: 0.8rem; overflow-x: auto; }
+        .spinner { display: none; text-align: center; margin-top: 1rem; font-style: italic; color: #6b7280; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <nav>
+        <a href="/">&#8592; Single Prospect</a>
+        <a href="/drafts">View Drafts</a>
+    </nav>
+    <h1>Batch Upload</h1>
+    <p>Upload a CSV file to prospect multiple companies at once. Each row runs the full pipeline.</p>
+
+    <form method="POST" enctype="multipart/form-data"
+          onsubmit="document.getElementById('spinner').style.display='block'; this.querySelector('button').disabled=true; this.querySelector('button').textContent='Processing...';">
+        <div class="form-group">
+            <label>CSV File *</label>
+            <input type="file" name="file" accept=".csv" required>
+            <p class="hint">Required column: <code>company_name</code> &nbsp; Optional: <code>industry</code>, <code>job_title</code></p>
+        </div>
+        <button type="submit">Run Batch</button>
+    </form>
+
+    <div id="spinner" class="spinner">Processing companies — this may take a few minutes...</div>
+
+    {% if message %}
+    <div class="success">{{ message }} <a href="/drafts">View all drafts &rarr;</a></div>
+    {% endif %}
+
+    {% if error %}
+    <div class="error"><strong>Error:</strong> {{ error }}</div>
+    {% endif %}
+
+    <details style="margin-top:2rem;">
+        <summary style="cursor:pointer; color:#6b7280; font-size:0.875rem;">Example CSV format</summary>
+        <pre>company_name,industry,job_title
+Acme Corp,Healthcare SaaS,CTO
+Globex Corp,,
+Initech,FinTech,VP of Engineering</pre>
+    </details>
+</div>
+</body>
+</html>

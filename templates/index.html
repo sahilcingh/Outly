@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>B2B Prospecting Agent</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f3f4f6; padding: 2rem; color: #111827; }
+        .container { max-width: 660px; margin: 0 auto; }
+        .card { background: white; padding: 2rem; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+        h1 { margin: 0 0 0.25rem; font-size: 1.4rem; }
+        .subtitle { color: #6b7280; font-size: 0.9rem; margin-bottom: 1.5rem; }
+        .nav { display: flex; gap: 1rem; }
+        .nav a { color: #2563eb; text-decoration: none; font-size: 0.88rem; font-weight: 500; }
+        .nav a:hover { text-decoration: underline; }
+        .form-group { margin-bottom: 1rem; }
+        label { display: block; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.4rem; color: #374151; }
+        input[type="text"] { width: 100%; padding: 0.55rem 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.95rem; transition: border-color 0.15s; }
+        input[type="text"]:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+        button[type="submit"] { background: #2563eb; color: white; padding: 0.6rem 1.25rem; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; width: 100%; font-size: 1rem; transition: background 0.15s; }
+        button[type="submit"]:hover { background: #1d4ed8; }
+        button[type="submit"]:disabled { background: #93c5fd; cursor: not-allowed; }
+
+        /* Progress feed */
+        #progress-box { display: none; }
+        .progress-title { font-weight: 600; font-size: 0.9rem; color: #374151; margin-bottom: 0.75rem; }
+        .step-list { list-style: none; padding: 0; margin: 0; }
+        .step-list li { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.45rem 0; font-size: 0.88rem; color: #374151; border-bottom: 1px solid #f3f4f6; }
+        .step-list li:last-child { border-bottom: none; }
+        .step-list li .detail { color: #6b7280; font-size: 0.82rem; display: block; margin-top: 1px; }
+        .pulse { display: inline-block; width: 8px; height: 8px; background: #2563eb; border-radius: 50%; animation: pulse 1.2s infinite; flex-shrink: 0; margin-top: 4px; }
+        @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(0.7)} }
+
+        /* Result card */
+        .result-card { margin-top: 0; }
+        .result-card h3 { margin: 0 0 1rem; color: #15803d; font-size: 1.1rem; }
+        .source-link { font-size: 0.85rem; color: #6b7280; margin-bottom: 0.75rem; }
+        .source-link a { color: #2563eb; text-decoration: none; }
+        .chips { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; margin-bottom: 1rem; }
+        .chip { border-radius: 6px; padding: 0.55rem 0.7rem; font-size: 0.82rem; }
+        .chip-role { background: #eff6ff; border: 1px solid #bfdbfe; }
+        .chip-role .chip-label { font-weight: 600; color: #1e40af; margin-bottom: 2px; }
+        .chip-role .chip-value { color: #1e3a8a; }
+        .chip-contact { background: #f0fdf4; border: 1px solid #bbf7d0; }
+        .chip-contact .chip-label { font-weight: 600; color: #166534; margin-bottom: 2px; }
+        .chip-contact .chip-value { color: #14532d; }
+        .chip-signals { background: #fff7ed; border: 1px solid #fed7aa; grid-column: span 2; }
+        .chip-signals .chip-label { font-weight: 600; color: #9a3412; margin-bottom: 4px; }
+        .chip-signals .chip-value { color: #7c2d12; font-size: 0.8rem; }
+        .signal-tag { display: inline-block; background: #ffedd5; border: 1px solid #fdba74; border-radius: 4px; padding: 1px 7px; margin: 2px 2px 0 0; font-size: 0.78rem; color: #9a3412; }
+        hr.divider { border: 0; border-top: 1px solid #e5e7eb; margin: 0.9rem 0; }
+        .field-label { font-weight: 600; font-size: 0.85rem; color: #374151; margin: 0.75rem 0 0.3rem; }
+        .field-label:first-of-type { margin-top: 0; }
+
+        /* Editable fields */
+        .edit-subject { width: 100%; padding: 0.5rem 0.7rem; border: 1px solid #d1d5db; border-radius: 5px; font-size: 0.93rem; font-family: inherit; }
+        .edit-body { width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 5px; font-size: 0.9rem; font-family: sans-serif; resize: vertical; min-height: 160px; line-height: 1.5; }
+        .edit-subject:focus, .edit-body:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+        .rationale { font-size: 0.82rem; color: #4b5563; background: #f1f5f9; padding: 0.6rem 0.75rem; border-radius: 5px; margin-top: 0.75rem; border-left: 3px solid #94a3b8; }
+        .action-row { display: flex; gap: 0.6rem; margin-top: 1rem; }
+        .btn-save { background: #16a34a; color: white; padding: 0.5rem 1rem; border: none; border-radius: 5px; cursor: pointer; font-weight: 600; font-size: 0.9rem; flex: 1; }
+        .btn-save:hover { background: #15803d; }
+        .btn-copy { background: #f3f4f6; color: #374151; padding: 0.5rem 1rem; border: 1px solid #d1d5db; border-radius: 5px; cursor: pointer; font-weight: 500; font-size: 0.9rem; }
+        .btn-copy:hover { background: #e5e7eb; }
+
+        .error-box { color: #dc2626; background: #fef2f2; padding: 1rem; border-radius: 6px; border: 1px solid #fecaca; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.15rem;">
+            <h1>🚀 Prospecting Agent</h1>
+            <div class="nav">
+                <a href="/drafts">📋 Drafts</a>
+                <a href="/batch">📂 Batch</a>
+            </div>
+        </div>
+        <p class="subtitle">Enter a company to research and draft a personalized outreach email.</p>
+
+        <form id="prospect-form" method="POST">
+            <div class="form-group">
+                <label>Company Name or Website URL *</label>
+                <input type="text" name="query" placeholder="e.g. Razorpay" required
+                       value="{{ query or '' }}">
+            </div>
+            <div class="form-group">
+                <label>Industry <span style="font-weight:400;color:#9ca3af;">(Optional)</span></label>
+                <input type="text" name="industry" placeholder="e.g. Fintech SaaS">
+            </div>
+            <div class="form-group">
+                <label>Role to Offer <span style="font-weight:400;color:#9ca3af;">(Optional — auto-detected)</span></label>
+                <input type="text" name="job_title" placeholder="e.g. Senior ML Engineer">
+            </div>
+            <button type="submit" id="submit-btn">Generate Draft</button>
+        </form>
+    </div>
+
+    {% if error %}
+    <div class="card error-box">
+        <strong>Error:</strong> {{ error }}
+    </div>
+    {% endif %}
+
+    <!-- Live progress feed (shown when job_id is set) -->
+    {% if job_id %}
+    <div class="card" id="progress-box" style="display:block;">
+        <div class="progress-title">Pipeline running...</div>
+        <ul class="step-list" id="step-list"></ul>
+    </div>
+
+    <!-- Result card (injected by JS when SSE done) -->
+    <div id="result-area"></div>
+
+    <script>
+    (function () {
+        const jobId = {{ job_id | tojson }};
+        const stepList = document.getElementById('step-list');
+        const resultArea = document.getElementById('result-area');
+        const submitBtn = document.getElementById('submit-btn');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Running...';
+
+        function addStep(label, detail) {
+            // Remove pulse from previous last item
+            const prev = stepList.querySelector('.pulse');
+            if (prev) prev.remove();
+
+            const li = document.createElement('li');
+            li.innerHTML = `<span class="pulse"></span><span><span class="step-label">${label}</span>${detail ? '<span class="detail">' + detail + '</span>' : ''}</span>`;
+            stepList.appendChild(li);
+            li.scrollIntoView({behavior:'smooth', block:'nearest'});
+        }
+
+        function renderResult(result, url) {
+            if (!result) {
+                resultArea.innerHTML = `<div class="card error-box">No draft generated. The company may already be in the database, or not enough content was found on their website.</div>`;
+                return;
+            }
+
+            const hiringTags = (result.hiring_signals || []).slice(0, 4)
+                .map(t => `<span class="signal-tag">${t}</span>`).join('');
+            const newsTags = (result.news_signals || []).slice(0, 2)
+                .map(n => `<span class="signal-tag">${n.title}</span>`).join('');
+            const signalContent = hiringTags || newsTags
+                ? `<div class="chip chip-signals" style="grid-column:span 2;">
+                    <div class="chip-label">📡 Live Signals Used</div>
+                    <div class="chip-value">${hiringTags}${newsTags}</div>
+                   </div>`
+                : '';
+
+            const contactLine = result.contact_name
+                ? `${result.contact_name}${result.contact_title ? ' — ' + result.contact_title : ''}`
+                : result.contact_title || 'Not found on website';
+            const emailLine = result.contact_email
+                ? `<div style="font-size:0.78rem;color:#059669;margin-top:2px;">${result.contact_email}</div>` : '';
+
+            resultArea.innerHTML = `
+            <div class="card result-card">
+                <h3>✅ Draft Ready</h3>
+                <div class="source-link">Source: <a href="${url}" target="_blank">${url}</a></div>
+
+                <form method="POST" action="/draft/save">
+                    <input type="hidden" name="company_name" value="${escHtml(result.company_name || '')}">
+                    <input type="hidden" name="company_url" value="${escHtml(url || '')}">
+                    <input type="hidden" name="rationale" value="${escHtml(result.rationale || '')}">
+
+                    <div class="chips">
+                        <div class="chip chip-role">
+                            <div class="chip-label">Role Being Offered</div>
+                            <div class="chip-value">${escHtml(result.role_to_offer || '—')}</div>
+                        </div>
+                        <div class="chip chip-contact">
+                            <div class="chip-label">Email Recipient</div>
+                            <div class="chip-value">${escHtml(contactLine)}</div>
+                            ${emailLine}
+                        </div>
+                        ${signalContent}
+                    </div>
+
+                    <hr class="divider">
+
+                    <div class="field-label">Subject</div>
+                    <input class="edit-subject" type="text" name="subject" value="${escHtml(result.subject || '')}">
+
+                    <div class="field-label">Body <span style="font-weight:400;font-size:0.78rem;color:#9ca3af;">(editable)</span></div>
+                    <textarea class="edit-body" name="body">${escHtml(result.body || '')}</textarea>
+
+                    <div class="rationale">🧠 <strong>Rationale:</strong> ${escHtml(result.rationale || '')}</div>
+
+                    <div class="action-row">
+                        <button type="submit" class="btn-save">💾 Save to Drafts</button>
+                        <button type="button" class="btn-copy" onclick="copyBody()">📋 Copy Body</button>
+                    </div>
+                </form>
+            </div>`;
+        }
+
+        function escHtml(str) {
+            return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        function copyBody() {
+            const ta = document.querySelector('.edit-body');
+            if (ta) { ta.select(); navigator.clipboard.writeText(ta.value); }
+        }
+
+        const es = new EventSource(`/stream/${jobId}`);
+        es.onmessage = function(e) {
+            const data = JSON.parse(e.data);
+
+            if (data.step === '__result__') {
+                es.close();
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Generate Draft';
+                renderResult(data.result, data.url);
+                return;
+            }
+
+            if (data.step === 'error') {
+                es.close();
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Generate Draft';
+                addStep(data.label, data.detail);
+                return;
+            }
+
+            addStep(data.label, data.detail);
+        };
+        es.onerror = function() {
+            es.close();
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Generate Draft';
+            addStep('❌ Connection lost', 'Please try again.');
+        };
+    })();
+    </script>
+    {% endif %}
+
+</div>
+</body>
+</html>

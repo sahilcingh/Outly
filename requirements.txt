@@ -1,0 +1,13 @@
+# B2B Prospecting Agent - Python deps (100% free, local)
+beautifulsoup4>=4.12.0
+requests>=2.31.0
+ddgs>=4.0.0
+google-genai>=1.0.0
+python-dotenv>=1.0.0
+pytest>=8.0.0
+
+# Web Application
+fastapi>=0.111.0
+uvicorn>=0.30.1
+jinja2>=3.1.4
+python-multipart>=0.0.9
