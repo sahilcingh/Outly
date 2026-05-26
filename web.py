@@ -109,7 +109,8 @@ def _run_pipeline_thread(
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     return templates.TemplateResponse(
-        "index.html", {"request": request, "result": None, "error": None, "job_id": None}
+        name="index.html",
+        context={"request": request, "result": None, "error": None, "job_id": None},
     )
 
 
@@ -132,14 +133,8 @@ async def run_agent(
     thread.start()
 
     return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "result": None,
-            "error": None,
-            "job_id": job_id,
-            "query": query,
-        },
+        name="index.html",
+        context={"request": request, "result": None, "error": None, "job_id": job_id, "query": query},
     )
 
 
@@ -213,8 +208,8 @@ async def save_edited_draft(
     except Exception as e:
         log.exception("Save edited draft error")
         return templates.TemplateResponse(
-            "index.html",
-            {"request": request, "result": None, "error": str(e), "job_id": None},
+            name="index.html",
+            context={"request": request, "result": None, "error": str(e), "job_id": None},
         )
 
 
@@ -224,7 +219,7 @@ async def save_edited_draft(
 
 @app.get("/batch", response_class=HTMLResponse)
 async def batch_form(request: Request):
-    return templates.TemplateResponse("batch.html", {"request": request, "message": None, "error": None})
+    return templates.TemplateResponse(name="batch.html", context={"request": request, "message": None, "error": None})
 
 
 @app.post("/batch", response_class=HTMLResponse)
@@ -237,8 +232,8 @@ async def batch_upload(request: Request, file: UploadFile = File(...)):
 
         if not rows:
             return templates.TemplateResponse(
-                "batch.html",
-                {"request": request, "message": None, "error": "CSV file is empty or has no valid rows."},
+                name="batch.html",
+                context={"request": request, "message": None, "error": "CSV file is empty or has no valid rows."},
             )
 
         processed = 0
@@ -253,18 +248,14 @@ async def batch_upload(request: Request, file: UploadFile = File(...)):
             processed += 1
 
         return templates.TemplateResponse(
-            "batch.html",
-            {
-                "request": request,
-                "message": f"Processed {processed} companies. Check the Drafts page for results.",
-                "error": None,
-            },
+            name="batch.html",
+            context={"request": request, "message": f"Processed {processed} companies. Check the Drafts page for results.", "error": None},
         )
 
     except Exception as e:
         log.exception("Batch upload error")
         return templates.TemplateResponse(
-            "batch.html", {"request": request, "message": None, "error": str(e)}
+            name="batch.html", context={"request": request, "message": None, "error": str(e)}
         )
 
 
@@ -278,8 +269,8 @@ async def drafts_page(request: Request, status: str = ""):
     filter_status = status if status in ("draft", "approved", "sent", "rejected") else None
     drafts = list_drafts(status=filter_status)
     return templates.TemplateResponse(
-        "drafts.html",
-        {"request": request, "drafts": drafts, "filter_status": filter_status or "all"},
+        name="drafts.html",
+        context={"request": request, "drafts": drafts, "filter_status": filter_status or "all"},
     )
 
 
@@ -289,7 +280,7 @@ async def draft_detail(request: Request, draft_id: int):
     draft = get_draft(draft_id)
     if not draft:
         return HTMLResponse(content="Draft not found.", status_code=404)
-    return templates.TemplateResponse("draft_detail.html", {"request": request, "draft": draft})
+    return templates.TemplateResponse(name="draft_detail.html", context={"request": request, "draft": draft})
 
 
 @app.post("/drafts/{draft_id}/approve")
