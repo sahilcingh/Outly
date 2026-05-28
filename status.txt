@@ -1,5 +1,47 @@
-9/5 - Deployed as a website but there is some issues with the company name. It is too generalised so make more refined.
-10/5 - Studied python for ai agrnts
-11/5 - 
+9/5  - Deployed as a website but there is some issues with the company name. It is too generalised so make more refined.
+10/5 - Studied python for ai agents
+11/5 -
 
+--- MAJOR REBUILD (May 2026) ---
 
+WHAT WAS BUILT:
+- Full B2B prospecting pipeline: Search → Scrape → Role Analysis → Contact Discovery → Email Draft
+- Bulletproof website finder (3-phase: direct probe → DuckDuckGo → HTTP verify)
+- SPA fallback chain (9 subpages → search snippet → targeted DDG query) for JS-heavy sites
+- Gemini API retry with exponential backoff (handles 503/429 errors)
+- Role inference via LLM: auto-detects what candidate to pitch based on company's tech stack
+- Contact extractor: scrapes /team, /leadership, /about pages for HR/Talent person
+- Live hiring signal scraper: checks /careers + Greenhouse/Lever/Workable ATS
+- Recent news signal scraper: DuckDuckGo News for funding/launch events
+- Permanent pipeline resilience: never returns empty, always degrades gracefully
+- Prompt versioning (v3), quality gate (hard-fail only on missing fields / body < 10 words)
+
+WEB UI:
+- FastAPI + Jinja2 web app
+- SSE live progress feed (replaces dumb spinner with step-by-step pipeline updates)
+- Inline draft editor (edit subject/body before saving)
+- Signal chips showing which hiring signals and news were used
+- Drafts review page (approve / reject / mark sent)
+- Batch CSV upload for multiple companies at once
+
+DEPLOYED:
+- Live at: https://outly-me9j.onrender.com
+- Platform: Render (free tier)
+- Repo: https://github.com/sahilcingh/Outly
+- Name: Outly
+
+KNOWN LIMITATIONS:
+- Render free tier: service sleeps after 15 min inactivity (30s cold start)
+- SQLite data resets on redeploy (no persistent disk on free tier)
+- No user authentication — anyone with URL can use it
+- No rate limiting
+
+NEXT PRIORITIES:
+1. PostgreSQL (replace SQLite — data persistence across deploys)
+2. Google OAuth (auth — gate access, protect API key)
+3. Rate limiting (prevent API quota drain)
+4. Spam score checker + one-click copy button
+5. Apollo.io free tier for verified contact emails
+6. Analytics dashboard (drafted → approved → sent funnel)
+7. Follow-up scheduler (auto-remind for due touches)
+8. Multi-user workspaces + CRM push (HubSpot free)
