@@ -64,6 +64,33 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Contact title validator
+# ---------------------------------------------------------------------------
+
+def _is_valid_contact_title(title: str) -> bool:
+    """
+    Returns True only if the string looks like a real job title.
+    Rejects scraped text snippets that the LLM or extractor mistakenly returns.
+    """
+    if not title:
+        return False
+    t = title.strip()
+    # Too long to be a job title
+    if len(t) > 70:
+        return False
+    # Em/en dashes indicate it's a sentence or scraped description, not a title
+    if "—" in t or "–" in t:
+        return False
+    # More than 7 words is almost certainly not a job title
+    if len(t.split()) > 7:
+        return False
+    # Contains sentence-ending punctuation — it's scraped prose
+    if any(c in t for c in (".", ",", ";", "!")):
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Quality gate
 # ---------------------------------------------------------------------------
 
@@ -250,8 +277,11 @@ def run_pipeline(
                 if analysis:
                     if not ctx.role_to_offer:
                         ctx.role_to_offer = analysis.get("role_to_offer", "")
-                    if not ctx.contact_title:
-                        ctx.contact_title = analysis.get("contact_title", "")
+                    inferred_title = analysis.get("contact_title", "")
+                    if not ctx.contact_title and _is_valid_contact_title(inferred_title):
+                        ctx.contact_title = inferred_title
+                    elif inferred_title and not _is_valid_contact_title(inferred_title):
+                        log.warning("Rejected bad contact_title from LLM: %r", inferred_title)
                     log.info("Role: %s | Contact title: %s", ctx.role_to_offer, ctx.contact_title)
 
                 # Hard fallbacks — pipeline never proceeds with empty role or contact
@@ -272,7 +302,11 @@ def run_pipeline(
                         contact = None
                     if contact:
                         ctx.contact_name = contact.get("name")
-                        ctx.contact_title = contact.get("title") or ctx.contact_title
+                        extracted_title = contact.get("title", "")
+                        if _is_valid_contact_title(extracted_title):
+                            ctx.contact_title = extracted_title
+                        elif extracted_title:
+                            log.warning("Rejected bad contact_title from extractor: %r", extracted_title)
                         ctx.contact_email = contact.get("email")
 
                 log.info("Drafting email → TO: %s (%s) | OFFERING: %s",
