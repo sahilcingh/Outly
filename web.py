@@ -81,7 +81,13 @@ async def register_submit(
         return templates.TemplateResponse(request=request, name="register.html",
             context={"error": "Passwords do not match.", "email": email})
 
-    init_users_table()
+    try:
+        init_users_table()
+    except Exception as e:
+        log.exception("init_users_table failed")
+        return templates.TemplateResponse(request=request, name="register.html",
+            context={"error": f"Database error: {e}", "email": email})
+
     user = create_user(email, password)
     if not user:
         return templates.TemplateResponse(request=request, name="register.html",

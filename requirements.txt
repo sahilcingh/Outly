@@ -8,7 +8,6 @@ pytest>=8.0.0
 
 # Database
 psycopg2-binary>=2.9.9
-passlib[bcrypt]>=1.7.4
 
 # Web Application
 fastapi>=0.111.0
