@@ -9,12 +9,12 @@ import json
 import logging
 import re
 
-from config import get_gemini_api_key
+from config import get_gemini_api_key, GEMINI_DEFAULT_MODEL
 from llm.retry import gemini_call
 
 log = logging.getLogger(__name__)
 
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = GEMINI_DEFAULT_MODEL
 
 _SYSTEM = """You are a senior technical recruiter. Read this candidate's resume or profile and extract structured information.
 

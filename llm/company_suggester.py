@@ -9,11 +9,11 @@ import json
 import logging
 import re
 
-from config import get_gemini_api_key
+from config import get_gemini_api_key, GEMINI_DEFAULT_MODEL
 from llm.retry import gemini_call
 
 log = logging.getLogger(__name__)
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = GEMINI_DEFAULT_MODEL
 
 _SYSTEM = """You are a senior technical recruiter with deep knowledge of the tech industry.
 Given a candidate's role and skills, suggest real companies that actively hire people with those skills.

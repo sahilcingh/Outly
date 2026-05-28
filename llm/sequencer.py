@@ -8,11 +8,11 @@ import json
 import re
 from typing import Any
 
-from config import get_gemini_api_key
+from config import get_gemini_api_key, GEMINI_DEFAULT_MODEL
 from target_context import TargetContext, resolve_target_context
 from llm.retry import gemini_call
 
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = GEMINI_DEFAULT_MODEL
 
 
 def _escape_braces(s: str) -> str:
