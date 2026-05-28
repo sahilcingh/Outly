@@ -34,6 +34,16 @@ def get_database_url() -> str | None:
     return os.getenv("DATABASE_URL", "").strip() or None
 
 
+def get_secret_key() -> str:
+    """Secret key for signing session cookies. Must be set in production."""
+    return os.getenv("SECRET_KEY", "dev-secret-change-in-production")
+
+
+def get_app_password() -> str | None:
+    """Password required to access the app. If not set, auth is disabled (local dev only)."""
+    return os.getenv("APP_PASSWORD", "").strip() or None
+
+
 # ---------------------------------------------------------------------------
 # SMTP (optional) — set these in .env to enable --send
 # ---------------------------------------------------------------------------

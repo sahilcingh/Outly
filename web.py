@@ -10,7 +10,9 @@ import uuid
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
+from config import get_secret_key, get_app_password
 from main import run_pipeline, run_batch_csv
 from storage.drafts import (
     get_draft,
@@ -23,9 +25,66 @@ from storage.drafts import (
 log = logging.getLogger(__name__)
 
 app = FastAPI(title="B2B Prospecting Agent")
+app.add_middleware(SessionMiddleware, secret_key=get_secret_key(), max_age=86400 * 7)  # 7-day sessions
+
+# ---------------------------------------------------------------------------
+# Auth helpers
+# ---------------------------------------------------------------------------
+
+_APP_PASSWORD = get_app_password()
+
+
+def _is_authenticated(request: Request) -> bool:
+    """Returns True if auth is disabled (no APP_PASSWORD set) or user is logged in."""
+    if not _APP_PASSWORD:
+        return True
+    return request.session.get("authenticated") is True
+
+
+def _require_auth(request: Request) -> RedirectResponse | None:
+    """Returns a redirect to /login if not authenticated, else None."""
+    if not _is_authenticated(request):
+        next_url = str(request.url)
+        return RedirectResponse(url=f"/login?next={next_url}", status_code=303)
+    return None
 
 os.makedirs("templates", exist_ok=True)
 templates = Jinja2Templates(directory="templates")
+
+
+# ---------------------------------------------------------------------------
+# Login / Logout
+# ---------------------------------------------------------------------------
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, next: str = "/"):
+    if _is_authenticated(request):
+        return RedirectResponse(url=next, status_code=303)
+    return templates.TemplateResponse(
+        request=request, name="login.html", context={"error": None, "next": next}
+    )
+
+
+@app.post("/login", response_class=HTMLResponse)
+async def login_submit(
+    request: Request,
+    password: str = Form(...),
+    next: str = Form("/"),
+):
+    if not _APP_PASSWORD or password == _APP_PASSWORD:
+        request.session["authenticated"] = True
+        return RedirectResponse(url=next or "/", status_code=303)
+    return templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        context={"error": "Incorrect password. Try again.", "next": next},
+    )
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse(url="/login", status_code=303)
 
 # ---------------------------------------------------------------------------
 # In-memory job store for SSE progress streaming
@@ -108,6 +167,8 @@ def _run_pipeline_thread(
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
+    if (r := _require_auth(request)):
+        return r
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -122,6 +183,8 @@ async def run_agent(
     industry: str = Form(None),
     job_title: str = Form(None),
 ):
+    if (r := _require_auth(request)):
+        return r
     job_id = str(uuid.uuid4())
     with _jobs_lock:
         _jobs[job_id] = {"events": [], "done": False, "result": None, "url": None, "error": None}
@@ -145,7 +208,12 @@ async def run_agent(
 # ---------------------------------------------------------------------------
 
 @app.get("/stream/{job_id}")
-async def stream_events(job_id: str):
+async def stream_events(request: Request, job_id: str):
+    if not _is_authenticated(request):
+        return StreamingResponse(
+            iter([f"data: {json.dumps({'step': 'error', 'label': '❌ Not authenticated', 'detail': ''})}\n\n"]),
+            media_type="text/event-stream",
+        )
     async def generator():
         last_sent = 0
         max_wait = 180  # seconds before timeout
@@ -196,6 +264,8 @@ async def save_edited_draft(
     body: str = Form(...),
     rationale: str = Form(""),
 ):
+    if (r := _require_auth(request)):
+        return r
     try:
         from llm.drafter import PROMPT_VERSION
         save_draft(
@@ -222,11 +292,15 @@ async def save_edited_draft(
 
 @app.get("/batch", response_class=HTMLResponse)
 async def batch_form(request: Request):
+    if (r := _require_auth(request)):
+        return r
     return templates.TemplateResponse(request=request, name="batch.html", context={"message": None, "error": None})
 
 
 @app.post("/batch", response_class=HTMLResponse)
 async def batch_upload(request: Request, file: UploadFile = File(...)):
+    if (r := _require_auth(request)):
+        return r
     try:
         content = await file.read()
         text = content.decode("utf-8")
@@ -270,6 +344,8 @@ async def batch_upload(request: Request, file: UploadFile = File(...)):
 
 @app.get("/drafts", response_class=HTMLResponse)
 async def drafts_page(request: Request, status: str = ""):
+    if (r := _require_auth(request)):
+        return r
     init_db()
     filter_status = status if status in ("draft", "approved", "sent", "rejected") else None
     drafts = list_drafts(status=filter_status)
@@ -282,6 +358,8 @@ async def drafts_page(request: Request, status: str = ""):
 
 @app.get("/drafts/{draft_id}", response_class=HTMLResponse)
 async def draft_detail(request: Request, draft_id: int):
+    if (r := _require_auth(request)):
+        return r
     init_db()
     draft = get_draft(draft_id)
     if not draft:
@@ -290,19 +368,25 @@ async def draft_detail(request: Request, draft_id: int):
 
 
 @app.post("/drafts/{draft_id}/approve")
-async def approve_draft(draft_id: int):
+async def approve_draft(request: Request, draft_id: int):
+    if (r := _require_auth(request)):
+        return r
     update_draft_status(draft_id, "approved")
     return RedirectResponse(url="/drafts", status_code=303)
 
 
 @app.post("/drafts/{draft_id}/reject")
-async def reject_draft(draft_id: int):
+async def reject_draft(request: Request, draft_id: int):
+    if (r := _require_auth(request)):
+        return r
     update_draft_status(draft_id, "rejected")
     return RedirectResponse(url="/drafts", status_code=303)
 
 
 @app.post("/drafts/{draft_id}/sent")
-async def mark_sent(draft_id: int):
+async def mark_sent(request: Request, draft_id: int):
+    if (r := _require_auth(request)):
+        return r
     update_draft_status(draft_id, "sent")
     return RedirectResponse(url="/drafts", status_code=303)
 
