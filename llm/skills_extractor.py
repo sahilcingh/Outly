@@ -25,10 +25,7 @@ Return STRICT JSON only:
   "experience_years": 3,
   "industries": ["industries this candidate has worked in or is best suited for, e.g. 'Fintech', 'SaaS', 'E-commerce'"],
   "search_queries": [
-    "3-5 DuckDuckGo search queries to find companies that would hire this candidate",
-    "e.g. 'fintech startups hiring Python FastAPI engineers India'",
-    "e.g. 'machine learning companies using PyTorch hiring 2024'",
-    "e.g. 'B2B SaaS companies using React Node.js'"
+    "3-5 DuckDuckGo search queries — these MUST be job listing queries that job boards like LinkedIn/Indeed would index, so company names appear in result titles. Format: '<RoleTitle> jobs <location>' or '<Skill1> <Skill2> engineer jobs'. Examples: 'Java Spring Boot engineer jobs India', 'Python backend developer fintech jobs', 'React TypeScript frontend developer jobs 2024'"
   ],
   "summary": "One sentence: what makes this candidate uniquely valuable to a hiring company"
 }

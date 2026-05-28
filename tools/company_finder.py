@@ -1,7 +1,12 @@
 """
-Company finder: given a candidate's skills and search queries,
-finds real companies that would be a good hiring match.
-Uses DuckDuckGo search + existing website verifier.
+Company finder: given a candidate's skills, finds real companies that would hire them.
+
+Strategy:
+1. Search DuckDuckGo with skill-based queries (job boards are FINE as input)
+2. Extract company names from job listing titles ("Engineer at Stripe" → "Stripe")
+   and from ATS platform URLs (lever.co/razorpay → "Razorpay")
+3. Verify each company name with find_official_website() — already bulletproof
+4. Return verified companies with their official URLs
 """
 
 from __future__ import annotations
@@ -12,46 +17,119 @@ from urllib.parse import urlparse
 
 log = logging.getLogger(__name__)
 
-# Domains to skip — job boards, directories, social media, news, wikis
-_SKIP_DOMAINS = frozenset([
-    "linkedin.com", "indeed.com", "glassdoor.com", "naukri.com",
-    "monster.com", "ziprecruiter.com", "greenhouse.io", "lever.co",
-    "workable.com", "dice.com", "stackoverflow.com", "wellfound.com",
-    "angellist.com", "builtin.com", "simplyhired.com", "careerbuilder.com",
-    "wikipedia.org", "quora.com", "reddit.com", "twitter.com", "x.com",
-    "facebook.com", "instagram.com", "youtube.com", "medium.com",
-    "techcrunch.com", "forbes.com", "crunchbase.com", "bloomberg.com",
-    "github.com", "gitlab.com", "kaggle.com", "huggingface.co",
-    "timesjobs.com", "shine.com", "foundit.in", "apna.co",
-])
+# ATS platforms whose URL paths contain the company slug
+_ATS_EXTRACTORS = [
+    (re.compile(r"boards\.greenhouse\.io/([^/?#]+)"), "greenhouse"),
+    (re.compile(r"jobs\.lever\.co/([^/?#]+)"),        "lever"),
+    (re.compile(r"apply\.workable\.com/([^/?#]+)"),   "workable"),
+    (re.compile(r"linkedin\.com/company/([^/?#]+)"),  "linkedin"),
+    (re.compile(r"linkedin\.com/jobs/view/\d+.*?at ([A-Za-z0-9 &\-\.]{2,40})"), "linkedin_title"),
+    (re.compile(r"careers\.([a-z0-9\-]+)\.(com|io|in)/"), "careers_sub"),
+]
+
+# Job title keywords — a token matching these is NOT a company name
+_JOB_WORDS = re.compile(
+    r"^(senior|junior|lead|staff|principal|remote|full.?time|part.?time|contract|"
+    r"engineer|developer|manager|analyst|designer|intern|architect|consultant|"
+    r"specialist|associate|director|head|hiring|we.?re|our|the|and|for|with|"
+    r"backend|frontend|fullstack|full.stack|software|data|ml|ai|devops|cloud|"
+    r"mobile|android|ios|web|site|platform|infrastructure|security|qa|"
+    r"product|business|sales|marketing|hr|finance|operations)$",
+    re.I,
+)
+
+# Separators used in job titles to separate role from company
+_SEP_PATTERNS = [
+    r"\s+at\s+",         # "Engineer at Stripe"
+    r"\s+@\s+",          # "Engineer @ Stripe"
+    r"\s+[-–—]\s+",      # "Engineer - Stripe" or "Engineer — Stripe"
+    r"\s*\|\s*",          # "Engineer | Stripe"
+    r"\s*::\s*",          # "Engineer :: Stripe"
+]
 
 
-def _root_domain(url: str) -> str:
-    try:
-        host = urlparse(url).netloc or url
-        parts = host.lstrip("www.").split(".")
-        return ".".join(parts[-2:]) if len(parts) >= 2 else host
-    except Exception:
-        return url
+def _slug_to_name(slug: str) -> str:
+    """Convert URL slug like 'razorpay-india' → 'Razorpay India'."""
+    return slug.replace("-", " ").replace("_", " ").title()
 
 
-def _domain_to_name(domain: str) -> str:
-    """Convert 'stripe.com' → 'Stripe'."""
-    name = domain.split(".")[0]
-    return name.replace("-", " ").replace("_", " ").title()
+def _is_company_token(token: str) -> bool:
+    """Return True if token looks like a company name fragment (not a job keyword)."""
+    token = token.strip()
+    if not token or len(token) < 2 or len(token) > 60:
+        return False
+    words = token.split()
+    # Reject if all words are job keywords
+    non_job = [w for w in words if not _JOB_WORDS.match(w)]
+    return len(non_job) >= 1
+
+
+def _extract_from_url(url: str) -> str | None:
+    """Try to extract a company name directly from the URL."""
+    for pattern, source in _ATS_EXTRACTORS:
+        m = pattern.search(url)
+        if m:
+            raw = m.group(1).strip()
+            if raw and len(raw) > 1:
+                name = _slug_to_name(raw)
+                log.debug("Company from %s URL: %s", source, name)
+                return name
+    return None
+
+
+def _extract_from_title(title: str) -> str | None:
+    """
+    Extract company name from a job listing title.
+    Works for: "Backend Engineer at Razorpay", "Python Dev | Stripe", etc.
+    """
+    for sep in _SEP_PATTERNS:
+        parts = re.split(sep, title, maxsplit=3)
+        if len(parts) < 2:
+            continue
+        # Try last segment first (company usually at end)
+        for candidate in reversed(parts[1:]):
+            candidate = candidate.strip().rstrip(".,;-—|")
+            if _is_company_token(candidate):
+                # Strip trailing location info ("Stripe · San Francisco")
+                candidate = re.split(r"\s*[·•,]\s*", candidate)[0].strip()
+                if candidate and len(candidate) > 1:
+                    return candidate
+    return None
+
+
+def _build_search_queries(skills: list[str], role_title: str, industry: str | None) -> list[str]:
+    """
+    Build targeted DuckDuckGo queries that reliably return job listings
+    with company names embedded in titles/snippets.
+    """
+    top_skills = " ".join(skills[:3])
+    queries = []
+
+    # Job listing queries — job boards index these and embed company names in titles
+    queries.append(f'"{top_skills}" engineer jobs')
+    if industry:
+        queries.append(f'{industry} companies hiring {skills[0]} developer')
+        queries.append(f'{industry} "{skills[0]}" "{skills[1] if len(skills)>1 else ""}" jobs')
+    queries.append(f'{role_title} jobs site:linkedin.com')
+    queries.append(f'"{skills[0]}" "{skills[1] if len(skills)>1 else top_skills}" software company')
+
+    # ATS platform queries — directly surface company slug in URL
+    queries.append(f'site:boards.greenhouse.io {top_skills}')
+    queries.append(f'site:jobs.lever.co {top_skills}')
+
+    return [q for q in queries if q.strip()]
 
 
 def find_companies_for_candidate(
     search_queries: list[str],
     skills: list[str],
+    role_title: str = "",
+    industry: str | None = None,
     max_companies: int = 8,
 ) -> list[dict]:
     """
-    Search DuckDuckGo with LLM-generated queries to find companies
-    that match this candidate's skills.
-
-    Returns a list of dicts:
-      {"name": str, "url": str, "snippet": str}
+    Find companies matching a candidate's skills.
+    Returns list of {"name": str, "url": str, "snippet": str}.
     """
     try:
         from duckduckgo_search import DDGS
@@ -61,76 +139,83 @@ def find_companies_for_candidate(
 
     from tools.search_tool import find_official_website
 
-    seen_domains: set[str] = set()
-    candidates: list[dict] = []
+    # Combine LLM queries with our reliable job-listing queries
+    all_queries = list(search_queries or []) + _build_search_queries(skills, role_title, industry)
+    # Deduplicate while preserving order
+    seen_q: set[str] = set()
+    unique_queries = []
+    for q in all_queries:
+        if q.lower() not in seen_q:
+            seen_q.add(q.lower())
+            unique_queries.append(q)
 
-    # Run each LLM-generated search query
-    for query in search_queries[:5]:
-        if len(candidates) >= max_companies:
+    extracted_names: list[str] = []
+    seen_names: set[str] = set()
+
+    for query in unique_queries[:8]:
+        if len(extracted_names) >= max_companies * 2:
             break
-        log.info("Company search query: %s", query)
+        log.info("Company search: %s", query)
         try:
             with DDGS() as ddgs:
                 results = list(ddgs.text(query, max_results=10, safesearch="off"))
         except Exception as e:
-            log.warning("DDG search failed for query '%s': %s", query, e)
+            log.warning("DDG failed for '%s': %s", query, e)
             continue
 
         for r in results:
-            url = r.get("href", "")
+            url   = r.get("href", "")
             title = r.get("title", "")
-            snippet = r.get("body", "")
 
-            if not url:
-                continue
+            # Try URL-based extraction first (most reliable)
+            name = _extract_from_url(url)
 
-            root = _root_domain(url)
-            if root in _SKIP_DOMAINS or root in seen_domains:
-                continue
+            # Fall back to title-based extraction
+            if not name:
+                name = _extract_from_title(title)
 
-            # Must look like a company domain (not a path-heavy URL)
-            parsed = urlparse(url)
-            if len(parsed.path.strip("/").split("/")) > 2:
-                continue
+            # Fall back to domain name for non-job-board URLs
+            if not name:
+                try:
+                    parsed = urlparse(url)
+                    host = parsed.netloc.lstrip("www.")
+                    root = ".".join(host.split(".")[-2:])
+                    # Skip obvious non-company domains
+                    skip = {"linkedin.com","indeed.com","glassdoor.com","naukri.com",
+                            "monster.com","google.com","bing.com","yahoo.com",
+                            "quora.com","reddit.com","wikipedia.org","medium.com",
+                            "github.com","stackoverflow.com","timesjobs.com"}
+                    if root not in skip and len(parsed.path.strip("/").split("/")) <= 2:
+                        name = _slug_to_name(host.split(".")[0])
+                except Exception:
+                    pass
 
-            seen_domains.add(root)
-            company_name = _domain_to_name(root)
+            if name:
+                key = name.lower().strip()
+                if key not in seen_names and len(key) > 2:
+                    seen_names.add(key)
+                    extracted_names.append(name)
 
-            candidates.append({
-                "name": company_name,
-                "url": f"{parsed.scheme}://{parsed.netloc}",
-                "snippet": snippet[:200],
-            })
+    log.info("Extracted %d candidate company names", len(extracted_names))
 
-            if len(candidates) >= max_companies:
-                break
-
-    # Fallback: skill-based direct queries if not enough results
-    if len(candidates) < 3 and skills:
-        skill_str = " ".join(skills[:4])
-        fallback_query = f"companies hiring {skill_str} engineer"
-        log.info("Fallback company search: %s", fallback_query)
+    # Now verify each name using find_official_website() — already bulletproof
+    verified: list[dict] = []
+    for name in extracted_names:
+        if len(verified) >= max_companies:
+            break
+        log.info("Verifying company: %s", name)
         try:
-            with DDGS() as ddgs:
-                results = list(ddgs.text(fallback_query, max_results=10, safesearch="off"))
-            for r in results:
-                url = r.get("href", "")
-                if not url:
-                    continue
-                root = _root_domain(url)
-                if root in _SKIP_DOMAINS or root in seen_domains:
-                    continue
-                seen_domains.add(root)
-                parsed = urlparse(url)
-                candidates.append({
-                    "name": _domain_to_name(root),
-                    "url": f"{parsed.scheme}://{parsed.netloc}",
-                    "snippet": r.get("body", "")[:200],
+            result = find_official_website(name)
+            if result and result.url:
+                verified.append({
+                    "name": name,
+                    "url": result.url,
+                    "snippet": result.snippet or "",
                 })
-                if len(candidates) >= max_companies:
-                    break
+                log.info("Verified: %s → %s", name, result.url)
         except Exception as e:
-            log.warning("Fallback search failed: %s", e)
+            log.warning("Could not verify '%s': %s", name, e)
+            continue
 
-    log.info("Found %d company candidates", len(candidates))
-    return candidates[:max_companies]
+    log.info("Verified %d companies for prospecting", len(verified))
+    return verified

@@ -428,6 +428,8 @@ def run_resume_pipeline(
     companies = find_companies_for_candidate(
         search_queries=search_queries,
         skills=skills,
+        role_title=role_title,
+        industry=candidate_industry,
         max_companies=max_companies,
     )
     if not companies:
