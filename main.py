@@ -30,6 +30,8 @@ from tools.search_tool import SearchResult, find_official_website
 from tools.scrape_tool import scrape_with_socials
 from tools.hiring_signal import find_hiring_signals
 from tools.news_signal import find_recent_news
+from tools.company_finder import find_companies_for_candidate
+from llm.skills_extractor import extract_skills
 from utils.text_cleaner import clean_text
 from utils.chunker import chunk_text, Chunk
 from llm.drafter import draft_email, PROMPT_VERSION
@@ -379,6 +381,94 @@ def run_pipeline(
             continue
 
     return output
+
+
+# ---------------------------------------------------------------------------
+# Resume-based pipeline
+# ---------------------------------------------------------------------------
+
+def run_resume_pipeline(
+    resume_text: str,
+    max_companies: int = 6,
+    industry: str | None = None,
+    user_id: int | None = None,
+    progress_callback=None,
+) -> list[dict]:
+    """
+    Reverse pipeline: given a candidate's resume text, find matching companies
+    and generate a personalized outreach draft for each one.
+
+    Returns a list of result dicts, each containing company + draft info.
+    """
+    def emit(step: str, detail: str = "") -> None:
+        if progress_callback:
+            progress_callback(step, detail)
+
+    init_db()
+    results = []
+
+    # Step 1: Extract candidate profile from resume
+    emit("analyzing_resume", "Extracting skills and role from resume...")
+    profile = extract_skills(resume_text)
+    if not profile:
+        emit("error", "Could not extract skills from resume. Try pasting the text directly.")
+        return []
+
+    role_title = profile.get("role_title", "Software Engineer")
+    skills = profile.get("skills", [])
+    search_queries = profile.get("search_queries", [])
+    candidate_industry = industry or (profile.get("industries", ["Technology"])[0] if profile.get("industries") else "Technology")
+    summary = profile.get("summary", "")
+
+    log.info("Candidate: %s | Skills: %s", role_title, skills[:5])
+    emit("profile_ready", f"Role: {role_title} | Skills: {', '.join(skills[:5])}")
+
+    # Step 2: Find matching companies
+    emit("finding_companies", f"Searching for companies that hire {role_title}...")
+    companies = find_companies_for_candidate(
+        search_queries=search_queries,
+        skills=skills,
+        max_companies=max_companies,
+    )
+    if not companies:
+        emit("error", "No matching companies found. Try adjusting the resume or industry.")
+        return []
+
+    emit("companies_found", f"Found {len(companies)} matching companies")
+    log.info("Companies found: %s", [c["name"] for c in companies])
+
+    # Step 3: For each company, run the prospecting pipeline
+    for i, company in enumerate(companies):
+        company_name = company["name"]
+        company_url = company["url"]
+        emit("prospecting", f"[{i+1}/{len(companies)}] Researching {company_name}...")
+
+        try:
+            output = run_pipeline(
+                query=company_url,
+                run_drafter=True,
+                run_sequence=False,
+                industry=candidate_industry,
+                job_title=role_title,
+                force=False,
+                user_id=user_id,
+                progress_callback=None,  # Suppress sub-pipeline events
+            )
+            for result, chunks, draft_data in output:
+                if draft_data:
+                    draft_data["company_name"] = result.title or company_name
+                    draft_data["company_url"] = result.url
+                    draft_data["candidate_role"] = role_title
+                    draft_data["candidate_skills"] = skills
+                    results.append(draft_data)
+                    log.info("Draft ready for %s", company_name)
+                    break
+        except Exception as e:
+            log.warning("Pipeline failed for %s: %s", company_name, e)
+            continue
+
+    emit("done", f"Generated {len(results)} drafts across {len(companies)} companies")
+    return results
 
 
 # ---------------------------------------------------------------------------

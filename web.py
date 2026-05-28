@@ -13,7 +13,8 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from config import get_secret_key
-from main import run_pipeline, run_batch_csv
+from main import run_pipeline, run_batch_csv, run_resume_pipeline
+from tools.resume_parser import parse_resume
 from storage.users import create_user, verify_login, init_users_table
 from storage.drafts import (
     get_draft,
@@ -331,6 +332,104 @@ async def save_edited_draft(
             name="index.html",
             context={"result": None, "error": str(e), "job_id": None},
         )
+
+
+# ---------------------------------------------------------------------------
+# Resume-based prospecting
+# ---------------------------------------------------------------------------
+
+_RESUME_STEP_LABELS = {
+    "analyzing_resume": "🔍 Extracting skills from resume...",
+    "profile_ready":    "✅ Candidate profile extracted",
+    "finding_companies":"🏢 Searching for matching companies...",
+    "companies_found":  "✅ Companies found",
+    "prospecting":      "✍️  Researching & drafting...",
+    "done":             "🎉 All drafts ready!",
+    "error":            "❌ Error",
+}
+
+
+def _run_resume_thread(
+    job_id: str,
+    resume_text: str,
+    industry: str | None,
+    max_companies: int,
+    user_id: int | None,
+) -> None:
+    def progress(step: str, detail: str = "") -> None:
+        label = _RESUME_STEP_LABELS.get(step, step)
+        event = {"step": step, "label": label, "detail": detail}
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id]["events"].append(event)
+
+    try:
+        results = run_resume_pipeline(
+            resume_text=resume_text,
+            max_companies=max_companies,
+            industry=industry or None,
+            user_id=user_id,
+            progress_callback=progress,
+        )
+        with _jobs_lock:
+            _jobs[job_id]["result"] = results
+            _jobs[job_id]["done"] = True
+        progress("done", f"{len(results)} drafts generated")
+    except Exception as e:
+        log.exception("Resume pipeline error for job %s", job_id)
+        with _jobs_lock:
+            _jobs[job_id]["error"] = str(e)
+            _jobs[job_id]["done"] = True
+        progress("error", str(e))
+
+
+@app.get("/resume", response_class=HTMLResponse)
+async def resume_page(request: Request):
+    if (r := _require_auth(request)):
+        return r
+    return templates.TemplateResponse(
+        request=request, name="resume_prospect.html",
+        context={"job_id": None, "error": None},
+    )
+
+
+@app.post("/resume", response_class=HTMLResponse)
+async def resume_submit(
+    request: Request,
+    resume_file: UploadFile = File(None),
+    resume_text: str = Form(""),
+    industry: str = Form(""),
+    max_companies: int = Form(6),
+):
+    if (r := _require_auth(request)):
+        return r
+
+    text = ""
+    if resume_file and resume_file.filename:
+        raw = await resume_file.read()
+        text = parse_resume(raw, resume_file.filename)
+    if not text and resume_text.strip():
+        text = resume_text.strip()
+    if not text:
+        return templates.TemplateResponse(
+            request=request, name="resume_prospect.html",
+            context={"job_id": None, "error": "Please upload a PDF or paste your resume text."},
+        )
+
+    job_id = str(uuid.uuid4())
+    with _jobs_lock:
+        _jobs[job_id] = {"events": [], "done": False, "result": None, "url": None, "error": None}
+
+    threading.Thread(
+        target=_run_resume_thread,
+        args=(job_id, text, industry or None, min(max(max_companies, 1), 10), _current_user_id(request)),
+        daemon=True,
+    ).start()
+
+    return templates.TemplateResponse(
+        request=request, name="resume_prospect.html",
+        context={"job_id": job_id, "error": None},
+    )
 
 
 # ---------------------------------------------------------------------------

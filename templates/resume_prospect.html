@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Outly — Resume Prospecting</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f3f4f6; padding: 2rem; color: #111827; }
+        .container { max-width: 720px; margin: 0 auto; }
+        .card { background: white; padding: 2rem; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+        h1 { margin: 0 0 0.2rem; font-size: 1.4rem; }
+        .subtitle { color: #6b7280; font-size: 0.9rem; margin-bottom: 1.5rem; }
+        .nav { display: flex; gap: 1rem; }
+        .nav a { color: #2563eb; text-decoration: none; font-size: 0.88rem; font-weight: 500; }
+        .nav a:hover { text-decoration: underline; }
+        .form-group { margin-bottom: 1rem; }
+        label { display: block; font-weight: 500; font-size: 0.88rem; color: #374151; margin-bottom: 0.4rem; }
+        input[type="text"], input[type="number"], select { width: 100%; padding: 0.55rem 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.93rem; }
+        input:focus, textarea:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+        .upload-area { border: 2px dashed #d1d5db; border-radius: 8px; padding: 2rem; text-align: center; cursor: pointer; transition: border-color 0.15s; background: #fafafa; }
+        .upload-area:hover { border-color: #2563eb; background: #eff6ff; }
+        .upload-area input { display: none; }
+        .upload-label { color: #6b7280; font-size: 0.9rem; }
+        .upload-label strong { color: #2563eb; }
+        .divider { display: flex; align-items: center; gap: 1rem; margin: 1rem 0; color: #9ca3af; font-size: 0.85rem; }
+        .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: #e5e7eb; }
+        textarea { width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.88rem; resize: vertical; min-height: 120px; font-family: inherit; line-height: 1.5; }
+        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        button[type="submit"] { background: #7c3aed; color: white; padding: 0.65rem 1.25rem; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; width: 100%; font-size: 1rem; transition: background 0.15s; margin-top: 0.5rem; }
+        button[type="submit"]:hover { background: #6d28d9; }
+        button[type="submit"]:disabled { background: #c4b5fd; cursor: not-allowed; }
+        .error-box { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; padding: 1rem; border-radius: 6px; font-size: 0.9rem; }
+
+        /* Progress */
+        .progress-title { font-weight: 600; font-size: 0.9rem; color: #374151; margin-bottom: 0.75rem; }
+        .step-list { list-style: none; padding: 0; margin: 0; }
+        .step-list li { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.45rem 0; font-size: 0.88rem; border-bottom: 1px solid #f3f4f6; }
+        .step-list li:last-child { border-bottom: none; }
+        .step-list li .detail { color: #6b7280; font-size: 0.82rem; display: block; margin-top: 1px; }
+        .pulse { display: inline-block; width: 8px; height: 8px; background: #7c3aed; border-radius: 50%; animation: pulse 1.2s infinite; flex-shrink: 0; margin-top: 4px; }
+        @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(0.7)} }
+
+        /* Results */
+        .results-grid { display: flex; flex-direction: column; gap: 1.25rem; }
+        .draft-card { background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 1.5rem; }
+        .draft-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
+        .company-name { font-weight: 700; font-size: 1rem; color: #111827; }
+        .company-url { font-size: 0.78rem; color: #6b7280; }
+        .skill-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.75rem; }
+        .skill-tag { background: #f3e8ff; border: 1px solid #d8b4fe; color: #7c3aed; border-radius: 4px; padding: 1px 8px; font-size: 0.78rem; }
+        .field-label { font-weight: 600; font-size: 0.82rem; color: #374151; margin: 0.6rem 0 0.25rem; }
+        .edit-subject { width: 100%; padding: 0.45rem 0.65rem; border: 1px solid #d1d5db; border-radius: 5px; font-size: 0.9rem; font-family: inherit; }
+        .edit-body { width: 100%; padding: 0.65rem; border: 1px solid #d1d5db; border-radius: 5px; font-size: 0.85rem; font-family: sans-serif; resize: vertical; min-height: 130px; line-height: 1.5; }
+        .rationale { font-size: 0.8rem; color: #4b5563; background: #f8fafc; padding: 0.5rem 0.65rem; border-radius: 5px; margin-top: 0.6rem; border-left: 3px solid #94a3b8; }
+        .action-row { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+        .btn-save { background: #16a34a; color: white; padding: 0.45rem 0.9rem; border: none; border-radius: 5px; cursor: pointer; font-weight: 600; font-size: 0.85rem; flex: 1; }
+        .btn-save:hover { background: #15803d; }
+        .btn-copy { background: #f3f4f6; color: #374151; padding: 0.45rem 0.9rem; border: 1px solid #d1d5db; border-radius: 5px; cursor: pointer; font-size: 0.85rem; }
+        .btn-copy:hover { background: #e5e7eb; }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.15rem;">
+            <h1>📄 Resume Prospecting</h1>
+            <div class="nav">
+                <a href="/">🚀 Single Company</a>
+                <a href="/drafts">📋 Drafts</a>
+                <a href="/logout" style="color:#6b7280;">Sign out</a>
+            </div>
+        </div>
+        <p class="subtitle">Upload a candidate's resume — we'll find matching companies and draft personalized outreach emails for each one.</p>
+
+        <form id="resume-form" method="POST" enctype="multipart/form-data" action="/resume">
+            <div class="form-group">
+                <label>Upload Resume (PDF)</label>
+                <div class="upload-area" onclick="document.getElementById('resume-file').click()">
+                    <input type="file" id="resume-file" name="resume_file" accept=".pdf,.txt" onchange="showFileName(this)">
+                    <div class="upload-label" id="upload-label">
+                        <strong>Click to upload</strong> or drag & drop<br>
+                        <span style="font-size:0.8rem;">PDF or TXT — max 5MB</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="divider">or paste resume text</div>
+
+            <div class="form-group">
+                <label>Paste Resume / Skills Summary</label>
+                <textarea name="resume_text" placeholder="Paste candidate's resume, LinkedIn summary, or skills list here..."></textarea>
+            </div>
+
+            <div class="row">
+                <div class="form-group">
+                    <label>Industry Focus <span style="font-weight:400;color:#9ca3af;">(Optional)</span></label>
+                    <input type="text" name="industry" placeholder="e.g. Fintech, SaaS, Healthcare">
+                </div>
+                <div class="form-group">
+                    <label>Number of Companies</label>
+                    <select name="max_companies">
+                        <option value="4">4 companies</option>
+                        <option value="6" selected>6 companies</option>
+                        <option value="8">8 companies</option>
+                        <option value="10">10 companies</option>
+                    </select>
+                </div>
+            </div>
+
+            <button type="submit" id="submit-btn">🔍 Find Companies & Draft Emails</button>
+        </form>
+    </div>
+
+    {% if error %}
+    <div class="card error-box">{{ error }}</div>
+    {% endif %}
+
+    {% if job_id %}
+    <div class="card" id="progress-box">
+        <div class="progress-title">Pipeline running...</div>
+        <ul class="step-list" id="step-list"></ul>
+    </div>
+    <div id="results-area"></div>
+
+    <script>
+    (function() {
+        const jobId = {{ job_id | tojson }};
+        const stepList = document.getElementById('step-list');
+        const resultsArea = document.getElementById('results-area');
+        const submitBtn = document.getElementById('submit-btn');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Running...';
+
+        function addStep(label, detail) {
+            const prev = stepList.querySelector('.pulse');
+            if (prev) prev.remove();
+            const li = document.createElement('li');
+            li.innerHTML = `<span class="pulse"></span><span><span>${label}</span>${detail ? '<span class="detail">' + detail + '</span>' : ''}</span>`;
+            stepList.appendChild(li);
+            li.scrollIntoView({behavior:'smooth', block:'nearest'});
+        }
+
+        function escHtml(s) {
+            return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        function renderResults(drafts) {
+            if (!drafts || drafts.length === 0) {
+                resultsArea.innerHTML = '<div class="card error-box">No drafts could be generated. The companies found may already be in the database or had insufficient web content.</div>';
+                return;
+            }
+
+            const cards = drafts.map((d, i) => {
+                const skillTags = (d.candidate_skills || []).slice(0, 6).map(s =>
+                    `<span class="skill-tag">${escHtml(s)}</span>`).join('');
+                return `
+                <div class="draft-card">
+                    <div class="draft-card-header">
+                        <div>
+                            <div class="company-name">${escHtml(d.company_name || d.company_url || '')}</div>
+                            <div class="company-url">${escHtml(d.company_url || '')}</div>
+                        </div>
+                        <div style="font-size:0.82rem;color:#7c3aed;font-weight:600;">${escHtml(d.candidate_role || '')}</div>
+                    </div>
+                    ${skillTags ? `<div class="skill-tags">${skillTags}</div>` : ''}
+                    <form method="POST" action="/draft/save">
+                        <input type="hidden" name="company_name" value="${escHtml(d.company_name || '')}">
+                        <input type="hidden" name="company_url" value="${escHtml(d.company_url || '')}">
+                        <input type="hidden" name="rationale" value="${escHtml(d.rationale || '')}">
+                        <div class="field-label">Subject</div>
+                        <input class="edit-subject" type="text" name="subject" value="${escHtml(d.subject || '')}">
+                        <div class="field-label">Body <span style="font-weight:400;font-size:0.75rem;color:#9ca3af;">(editable)</span></div>
+                        <textarea class="edit-body" name="body">${escHtml(d.body || '')}</textarea>
+                        <div class="rationale">🧠 <strong>Rationale:</strong> ${escHtml(d.rationale || '')}</div>
+                        <div class="action-row">
+                            <button type="submit" class="btn-save">💾 Save Draft</button>
+                            <button type="button" class="btn-copy" onclick="copyBody(this)">📋 Copy</button>
+                        </div>
+                    </form>
+                </div>`;
+            }).join('');
+
+            resultsArea.innerHTML = `
+                <div style="font-weight:600;font-size:1rem;margin-bottom:1rem;color:#111827;">
+                    ✅ ${drafts.length} draft${drafts.length > 1 ? 's' : ''} ready
+                </div>
+                <div class="results-grid">${cards}</div>`;
+        }
+
+        function copyBody(btn) {
+            const ta = btn.closest('.draft-card').querySelector('.edit-body');
+            if (ta) navigator.clipboard.writeText(ta.value);
+        }
+
+        const es = new EventSource(`/stream/${jobId}`);
+        es.onmessage = function(e) {
+            const data = JSON.parse(e.data);
+            if (data.step === '__result__') {
+                es.close();
+                submitBtn.disabled = false;
+                submitBtn.textContent = '🔍 Find Companies & Draft Emails';
+                renderResults(data.result);
+                return;
+            }
+            if (data.step === 'error') {
+                es.close();
+                submitBtn.disabled = false;
+                submitBtn.textContent = '🔍 Find Companies & Draft Emails';
+            }
+            addStep(data.label, data.detail);
+        };
+        es.onerror = function() {
+            es.close();
+            submitBtn.disabled = false;
+            submitBtn.textContent = '🔍 Find Companies & Draft Emails';
+            addStep('❌ Connection lost', 'Please try again.');
+        };
+    })();
+    </script>
+    {% endif %}
+
+</div>
+<script>
+function showFileName(input) {
+    const label = document.getElementById('upload-label');
+    if (input.files && input.files[0]) {
+        label.innerHTML = `<strong>${input.files[0].name}</strong><br><span style="font-size:0.8rem;color:#16a34a;">✓ Ready to upload</span>`;
+    }
+}
+</script>
+</body>
+</html>
