@@ -144,6 +144,7 @@ def run_pipeline(
     job_title: str | None = None,
     force: bool = False,
     progress_callback=None,
+    user_id: int | None = None,
 ) -> list[tuple[SearchResult, list[Chunk], dict | None]]:
     """
     Execute Search -> Scrape -> Clean -> Chunk [-> Draft -> Save].
@@ -326,6 +327,7 @@ def run_pipeline(
                             body=draft_data["body"],
                             rationale=draft_data["rationale"],
                             prompt_version=PROMPT_VERSION,
+                            user_id=user_id,
                         )
                         log.info("Draft saved [%s]: %s", PROMPT_VERSION, draft_data["subject"][:60])
                         # Attach discovered context for callers (web UI)

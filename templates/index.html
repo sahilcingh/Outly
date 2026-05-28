@@ -76,6 +76,9 @@
             <div class="nav">
                 <a href="/drafts">📋 Drafts</a>
                 <a href="/batch">📂 Batch</a>
+                {% if request.session.get("user_email") %}
+                <span style="color:#9ca3af;font-size:0.82rem;">{{ request.session.get("user_email") }}</span>
+                {% endif %}
                 <a href="/logout" style="color:#6b7280;">Sign out</a>
             </div>
         </div>

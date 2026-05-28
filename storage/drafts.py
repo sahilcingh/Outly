@@ -124,6 +124,7 @@ def init_db() -> None:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS drafts (
                     id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT,
                     company_name TEXT NOT NULL,
                     company_url TEXT NOT NULL,
                     subject TEXT NOT NULL,
@@ -164,6 +165,7 @@ def init_db() -> None:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS drafts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
                     company_name TEXT NOT NULL,
                     company_url TEXT NOT NULL,
                     subject TEXT NOT NULL,
@@ -202,6 +204,8 @@ def init_db() -> None:
             existing = {row[1] for row in conn.execute("PRAGMA table_info(drafts)")}
             if "prompt_version" not in existing:
                 conn.execute("ALTER TABLE drafts ADD COLUMN prompt_version TEXT NOT NULL DEFAULT 'v1'")
+            if "user_id" not in existing:
+                conn.execute("ALTER TABLE drafts ADD COLUMN user_id INTEGER")
             existing_t = {row[1] for row in conn.execute("PRAGMA table_info(outreach_touches)")}
             if "send_after" not in existing_t:
                 conn.execute("ALTER TABLE outreach_touches ADD COLUMN send_after TEXT")
@@ -256,6 +260,7 @@ def save_draft(
     body: str,
     rationale: str,
     prompt_version: str = "v1",
+    user_id: int | None = None,
 ) -> int:
     init_db()
     created = _now()
@@ -263,16 +268,16 @@ def save_draft(
         with _pg_conn() as conn:
             cur = conn.cursor()
             cur.execute(
-                f"""INSERT INTO drafts (company_name, company_url, subject, body, rationale, status, created_at, prompt_version)
-                    VALUES ({_P},{_P},{_P},{_P},{_P},'draft',{_P},{_P}) RETURNING id""",
-                (company_name, company_url, subject, body, rationale, created, prompt_version),
+                f"""INSERT INTO drafts (user_id, company_name, company_url, subject, body, rationale, status, created_at, prompt_version)
+                    VALUES ({_P},{_P},{_P},{_P},{_P},{_P},'draft',{_P},{_P}) RETURNING id""",
+                (user_id, company_name, company_url, subject, body, rationale, created, prompt_version),
             )
             return cur.fetchone()[0]
     else:
         with _sqlite_conn() as conn:
             cur = conn.execute(
-                "INSERT INTO drafts (company_name, company_url, subject, body, rationale, status, created_at, prompt_version) VALUES (?,?,?,?,?,'draft',?,?)",
-                (company_name, company_url, subject, body, rationale, created, prompt_version),
+                "INSERT INTO drafts (user_id, company_name, company_url, subject, body, rationale, status, created_at, prompt_version) VALUES (?,?,?,?,?,?,'draft',?,?)",
+                (user_id, company_name, company_url, subject, body, rationale, created, prompt_version),
             )
             return cur.lastrowid
 
@@ -298,22 +303,25 @@ def get_draft(draft_id: int) -> Draft | None:
     )
 
 
-def list_drafts(status: str | None = None) -> list[Draft]:
+def list_drafts(status: str | None = None, user_id: int | None = None) -> list[Draft]:
     init_db()
+    conditions, params = [], []
+    if status:
+        conditions.append(f"status = {_P}"); params.append(status)
+    if user_id is not None:
+        conditions.append(f"user_id = {_P}"); params.append(user_id)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
     if _USE_POSTGRES:
         with _pg_conn() as conn:
             cur = conn.cursor()
-            if status:
-                cur.execute(f"SELECT * FROM drafts WHERE status = {_P} ORDER BY created_at DESC", (status,))
-            else:
-                cur.execute("SELECT * FROM drafts ORDER BY created_at DESC")
+            cur.execute(f"SELECT * FROM drafts {where} ORDER BY created_at DESC", params)
             rows = _fetchall_pg(cur)
     else:
         with _sqlite_conn() as conn:
-            if status:
-                rows = [dict(r) for r in conn.execute("SELECT * FROM drafts WHERE status = ? ORDER BY created_at DESC", (status,)).fetchall()]
-            else:
-                rows = [dict(r) for r in conn.execute("SELECT * FROM drafts ORDER BY created_at DESC").fetchall()]
+            rows = [dict(r) for r in conn.execute(
+                f"SELECT * FROM drafts {where} ORDER BY created_at DESC", params
+            ).fetchall()]
 
     return [
         Draft(id=r["id"], company_name=r["company_name"], company_url=r["company_url"],

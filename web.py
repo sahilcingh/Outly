@@ -12,8 +12,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from config import get_secret_key, get_app_password
+from config import get_secret_key
 from main import run_pipeline, run_batch_csv
+from storage.users import create_user, verify_login, init_users_table
 from storage.drafts import (
     get_draft,
     init_db,
@@ -31,21 +32,21 @@ app.add_middleware(SessionMiddleware, secret_key=get_secret_key(), max_age=86400
 # Auth helpers
 # ---------------------------------------------------------------------------
 
-_APP_PASSWORD = get_app_password()
+def _current_user_id(request: Request) -> int | None:
+    return request.session.get("user_id")
+
+
+def _current_user_email(request: Request) -> str | None:
+    return request.session.get("user_email")
 
 
 def _is_authenticated(request: Request) -> bool:
-    """Returns True if auth is disabled (no APP_PASSWORD set) or user is logged in."""
-    if not _APP_PASSWORD:
-        return True
-    return request.session.get("authenticated") is True
+    return _current_user_id(request) is not None
 
 
 def _require_auth(request: Request) -> RedirectResponse | None:
-    """Returns a redirect to /login if not authenticated, else None."""
     if not _is_authenticated(request):
-        next_url = str(request.url)
-        return RedirectResponse(url=f"/login?next={next_url}", status_code=303)
+        return RedirectResponse(url=f"/login?next={request.url}", status_code=303)
     return None
 
 os.makedirs("templates", exist_ok=True)
@@ -56,29 +57,66 @@ templates = Jinja2Templates(directory="templates")
 # Login / Logout
 # ---------------------------------------------------------------------------
 
+@app.get("/register", response_class=HTMLResponse)
+async def register_page(request: Request):
+    if _is_authenticated(request):
+        return RedirectResponse(url="/", status_code=303)
+    return templates.TemplateResponse(
+        request=request, name="register.html", context={"error": None, "email": ""}
+    )
+
+
+@app.post("/register", response_class=HTMLResponse)
+async def register_submit(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+):
+    email = email.strip().lower()
+    if len(password) < 8:
+        return templates.TemplateResponse(request=request, name="register.html",
+            context={"error": "Password must be at least 8 characters.", "email": email})
+    if password != confirm_password:
+        return templates.TemplateResponse(request=request, name="register.html",
+            context={"error": "Passwords do not match.", "email": email})
+
+    init_users_table()
+    user = create_user(email, password)
+    if not user:
+        return templates.TemplateResponse(request=request, name="register.html",
+            context={"error": "An account with this email already exists.", "email": email})
+
+    request.session["user_id"] = user.id
+    request.session["user_email"] = user.email
+    return RedirectResponse(url="/", status_code=303)
+
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, next: str = "/"):
     if _is_authenticated(request):
         return RedirectResponse(url=next, status_code=303)
     return templates.TemplateResponse(
-        request=request, name="login.html", context={"error": None, "next": next}
+        request=request, name="login.html", context={"error": None, "next": next, "email": ""}
     )
 
 
 @app.post("/login", response_class=HTMLResponse)
 async def login_submit(
     request: Request,
+    email: str = Form(...),
     password: str = Form(...),
     next: str = Form("/"),
 ):
-    if not _APP_PASSWORD or password == _APP_PASSWORD:
-        request.session["authenticated"] = True
-        return RedirectResponse(url=next or "/", status_code=303)
-    return templates.TemplateResponse(
-        request=request,
-        name="login.html",
-        context={"error": "Incorrect password. Try again.", "next": next},
-    )
+    email = email.strip().lower()
+    user = verify_login(email, password)
+    if not user:
+        return templates.TemplateResponse(request=request, name="login.html",
+            context={"error": "Invalid email or password.", "next": next, "email": email})
+
+    request.session["user_id"] = user.id
+    request.session["user_email"] = user.email
+    return RedirectResponse(url=next or "/", status_code=303)
 
 
 @app.get("/logout")
@@ -120,6 +158,7 @@ def _run_pipeline_thread(
     query: str,
     industry: str | None,
     job_title: str | None,
+    user_id: int | None = None,
 ) -> None:
     def progress(step: str, detail: str = "") -> None:
         _push(job_id, step, detail)
@@ -132,6 +171,7 @@ def _run_pipeline_thread(
             run_drafter=True,
             run_sequence=False,
             progress_callback=progress,
+            user_id=user_id,
         )
 
         result = None
@@ -191,7 +231,7 @@ async def run_agent(
 
     thread = threading.Thread(
         target=_run_pipeline_thread,
-        args=(job_id, query, industry or None, job_title or None),
+        args=(job_id, query, industry or None, job_title or None, _current_user_id(request)),
         daemon=True,
     )
     thread.start()
@@ -275,6 +315,7 @@ async def save_edited_draft(
             body=body,
             rationale=rationale or "Manually edited draft",
             prompt_version=PROMPT_VERSION,
+            user_id=_current_user_id(request),
         )
         return RedirectResponse(url="/drafts", status_code=303)
     except Exception as e:
@@ -348,7 +389,7 @@ async def drafts_page(request: Request, status: str = ""):
         return r
     init_db()
     filter_status = status if status in ("draft", "approved", "sent", "rejected") else None
-    drafts = list_drafts(status=filter_status)
+    drafts = list_drafts(status=filter_status, user_id=_current_user_id(request))
     return templates.TemplateResponse(
         request=request,
         name="drafts.html",
