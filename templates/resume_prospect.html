@@ -159,7 +159,9 @@
                 <div class="draft-card">
                     <div class="draft-card-header">
                         <div>
-                            <div class="company-name">${escHtml(d.company_name || d.company_url || '')}</div>
+                            <div class="company-name">${escHtml(d.company_name || d.company_url || '')}
+                                ${d.from_cache ? ' <span style="font-size:0.72rem;background:#fef3c7;border:1px solid #fcd34d;color:#92400e;border-radius:4px;padding:1px 7px;font-weight:500;">📦 from database</span>' : ''}
+                            </div>
                             <div class="company-url">${escHtml(d.company_url || '')}</div>
                         </div>
                         <div style="font-size:0.82rem;color:#7c3aed;font-weight:600;">${escHtml(d.candidate_role || '')}</div>

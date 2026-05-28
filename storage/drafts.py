@@ -282,6 +282,34 @@ def save_draft(
             return cur.lastrowid
 
 
+def get_latest_draft_by_url(company_url: str) -> Draft | None:
+    """Fetch the most recent approved/draft for a company URL across all users."""
+    init_db()
+    if _USE_POSTGRES:
+        with _pg_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT * FROM drafts WHERE company_url = {_P} AND status != 'rejected' ORDER BY created_at DESC LIMIT 1",
+                (company_url,),
+            )
+            row = _fetchone_pg(cur)
+    else:
+        with _sqlite_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM drafts WHERE company_url = ? AND status != 'rejected' ORDER BY created_at DESC LIMIT 1",
+                (company_url,),
+            ).fetchone()
+            row = dict(row) if row else None
+
+    if not row:
+        return None
+    return Draft(
+        id=row["id"], company_name=row["company_name"], company_url=row["company_url"],
+        subject=row["subject"], body=row["body"], rationale=row["rationale"],
+        status=row["status"], created_at=row["created_at"], prompt_version=row["prompt_version"],
+    )
+
+
 def get_draft(draft_id: int) -> Draft | None:
     init_db()
     if _USE_POSTGRES:

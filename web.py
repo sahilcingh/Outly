@@ -142,6 +142,7 @@ _STEP_LABELS = {
     "searching":  "🔍 Searching for official website...",
     "found":      "✅ Website found",
     "duplicate":  "⚠️  Already drafted — use --force to re-run",
+    "cached":     "📦 Using existing draft from database",
     "scraping":   "🌐 Scraping website content...",
     "signals":    "📡 Fetching hiring signals & recent news...",
     "analyzing":  "🧠 Analyzing company tech stack & role fit...",

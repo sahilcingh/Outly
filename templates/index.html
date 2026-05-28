@@ -164,7 +164,7 @@
 
             resultArea.innerHTML = `
             <div class="card result-card">
-                <h3>✅ Draft Ready</h3>
+                <h3>✅ Draft Ready {% if result.from_cache %}<span style="font-size:0.72rem;background:#fef3c7;border:1px solid #fcd34d;color:#92400e;border-radius:4px;padding:2px 8px;font-weight:500;vertical-align:middle;">📦 from database</span>{% endif %}</h3>
                 <div class="source-link">Source: <a href="${url}" target="_blank">${url}</a></div>
 
                 <form method="POST" action="/draft/save">

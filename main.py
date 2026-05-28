@@ -43,6 +43,7 @@ from tools.contact_extractor import find_contact
 from storage.drafts import (
     company_already_drafted,
     get_draft,
+    get_latest_draft_by_url,
     init_db,
     list_drafts,
     list_due_touches,
@@ -175,13 +176,34 @@ def run_pipeline(
         try:
             emit("found", result.url)
 
-            # --- Duplicate guard ---
+            # --- Duplicate guard: return cached draft instead of skipping ---
             if run_drafter and not force and company_already_drafted(result.url):
-                log.warning(
-                    "Skipping '%s' — already drafted. Use --force to re-draft.", result.url
-                )
-                emit("duplicate", result.url)
-                continue
+                cached = get_latest_draft_by_url(result.url)
+                if cached:
+                    log.info("Returning cached draft for '%s'", result.url)
+                    emit("cached", f"Using existing draft for {result.title}")
+                    draft_data = {
+                        "subject": cached.subject,
+                        "body": cached.body,
+                        "rationale": cached.rationale,
+                        "from_cache": True,
+                        "cached_at": cached.created_at,
+                        "company_name": cached.company_name,
+                        "company_url": cached.company_url,
+                        "role_to_offer": "",
+                        "contact_name": None,
+                        "contact_title": None,
+                        "contact_email": None,
+                        "hiring_signals": [],
+                        "news_signals": [],
+                    }
+                    output.append((result, [], draft_data))
+                    log.info("Pipeline complete (cached) for '%s'.", query)
+                    break
+                else:
+                    log.warning("Skipping '%s' — already drafted, no cached draft found.", result.url)
+                    emit("duplicate", result.url)
+                    continue
 
             emit("scraping", f"Scraping {result.url}...")
             log.info("Scraping: %s", result.url)
