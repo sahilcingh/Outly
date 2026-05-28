@@ -32,6 +32,7 @@ from tools.hiring_signal import find_hiring_signals
 from tools.news_signal import find_recent_news
 from tools.company_finder import find_companies_for_candidate
 from llm.skills_extractor import extract_skills
+from llm.company_suggester import suggest_companies
 from utils.text_cleaner import clean_text
 from utils.chunker import chunk_text, Chunk
 from llm.drafter import draft_email, PROMPT_VERSION
@@ -423,21 +424,48 @@ def run_resume_pipeline(
     log.info("Candidate: %s | Skills: %s", role_title, skills[:5])
     emit("profile_ready", f"Role: {role_title} | Skills: {', '.join(skills[:5])}")
 
-    # Step 2: Find matching companies
-    emit("finding_companies", f"Searching for companies that hire {role_title}...")
-    companies = find_companies_for_candidate(
-        search_queries=search_queries,
-        skills=skills,
+    # Step 2: Ask Gemini to suggest matching companies (fast, reliable, no rate limits)
+    emit("finding_companies", f"Finding companies that hire {role_title}...")
+    suggestions = suggest_companies(
         role_title=role_title,
+        skills=skills,
         industry=candidate_industry,
-        max_companies=max_companies,
+        count=max_companies + 4,  # ask for extras in case some fail verification
     )
-    if not companies:
-        emit("error", "No matching companies found. Try adjusting the resume or industry.")
+
+    if not suggestions:
+        emit("error", "Could not get company suggestions. Please try again.")
         return []
 
-    emit("companies_found", f"Found {len(companies)} matching companies")
-    log.info("Companies found: %s", [c["name"] for c in companies])
+    log.info("Gemini suggested %d companies: %s", len(suggestions),
+             [s.get("name") for s in suggestions])
+
+    # Step 3: Verify each suggested company — get official URL
+    emit("verifying_companies", f"Verifying {len(suggestions)} company websites...")
+    companies = []
+    for suggestion in suggestions:
+        if len(companies) >= max_companies:
+            break
+        name = suggestion.get("name", "").strip()
+        reason = suggestion.get("reason", "")
+        if not name:
+            continue
+        try:
+            result = find_official_website(name)
+            if result and result.url:
+                companies.append({"name": name, "url": result.url, "snippet": reason})
+                log.info("Verified: %s → %s", name, result.url)
+            else:
+                log.warning("Could not verify URL for: %s", name)
+        except Exception as e:
+            log.warning("Verification failed for %s: %s", name, e)
+
+    if not companies:
+        emit("error", "Could not verify any company websites. Try again.")
+        return []
+
+    emit("companies_found", f"Found {len(companies)} verified companies")
+    log.info("Companies ready: %s", [c["name"] for c in companies])
 
     # Step 3: For each company, run the prospecting pipeline
     for i, company in enumerate(companies):

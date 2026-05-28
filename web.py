@@ -346,13 +346,14 @@ async def save_edited_draft(
 # ---------------------------------------------------------------------------
 
 _RESUME_STEP_LABELS = {
-    "analyzing_resume": "🔍 Extracting skills from resume...",
-    "profile_ready":    "✅ Candidate profile extracted",
-    "finding_companies":"🏢 Searching for matching companies...",
-    "companies_found":  "✅ Companies found",
-    "prospecting":      "✍️  Researching & drafting...",
-    "done":             "🎉 All drafts ready!",
-    "error":            "❌ Error",
+    "analyzing_resume":    "🔍 Extracting skills from resume...",
+    "profile_ready":       "✅ Candidate profile extracted",
+    "finding_companies":   "🏢 Finding matching companies via AI...",
+    "verifying_companies": "🔗 Verifying company websites...",
+    "companies_found":     "✅ Companies verified",
+    "prospecting":         "✍️  Researching & drafting...",
+    "done":                "🎉 All drafts ready!",
+    "error":               "❌ Error",
 }
 
 
