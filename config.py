@@ -29,6 +29,11 @@ def get_gemini_api_key() -> str:
     return require_env("GEMINI_API_KEY")
 
 
+def get_database_url() -> str | None:
+    """Return PostgreSQL DATABASE_URL if set, else None (falls back to SQLite)."""
+    return os.getenv("DATABASE_URL", "").strip() or None
+
+
 # ---------------------------------------------------------------------------
 # SMTP (optional) — set these in .env to enable --send
 # ---------------------------------------------------------------------------
