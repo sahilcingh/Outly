@@ -34,8 +34,8 @@ def get_database_url() -> str | None:
     return os.getenv("DATABASE_URL", "").strip() or None
 
 
-# Default Gemini model — gemini-1.5-flash has 1500 req/day free vs 20/day for 2.5-flash
-GEMINI_DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+# gemini-2.0-flash: 1500 req/day free, available on v1beta, fast and capable
+GEMINI_DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 
 def get_secret_key() -> str:
