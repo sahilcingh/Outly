@@ -263,8 +263,9 @@ async def stream_events(request: Request, job_id: str):
         )
     async def generator():
         last_sent = 0
-        max_wait = 180  # seconds before timeout
+        max_wait = 600  # 10 minutes — resume pipeline can take a while
         waited = 0
+        last_ping = 0
 
         while waited < max_wait:
             with _jobs_lock:
@@ -276,18 +277,24 @@ async def stream_events(request: Request, job_id: str):
 
             events = job["events"]
             # Send any new events
+            new_events_sent = False
             while last_sent < len(events):
                 yield f"data: {json.dumps(events[last_sent])}\n\n"
                 last_sent += 1
+                new_events_sent = True
 
             if job["done"]:
-                # Send final result payload
                 payload = {"step": "__result__", "result": job["result"], "url": job["url"]}
                 yield f"data: {json.dumps(payload)}\n\n"
                 return
 
-            await asyncio.sleep(0.3)
-            waited += 0.3
+            # Send keepalive comment every 15s to prevent Render/proxy timeout
+            if not new_events_sent and (waited - last_ping) >= 15:
+                yield ": keepalive\n\n"
+                last_ping = waited
+
+            await asyncio.sleep(0.5)
+            waited += 0.5
 
         yield f"data: {json.dumps({'step': 'error', 'label': '❌ Timeout', 'detail': 'Pipeline took too long.'})}\n\n"
 
