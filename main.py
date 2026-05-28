@@ -504,7 +504,7 @@ def run_resume_pipeline(
                 job_title=role_title,
                 force=False,
                 user_id=user_id,
-                progress_callback=None,  # Suppress sub-pipeline events
+                progress_callback=None,
             )
             for result, chunks, draft_data in output:
                 if draft_data:
@@ -516,6 +516,12 @@ def run_resume_pipeline(
                     log.info("Draft ready for %s", company_name)
                     break
         except Exception as e:
+            err_str = str(e)
+            # Hard errors (quota, auth) — stop the whole batch immediately
+            if any(k in err_str for k in ("RESOURCE_EXHAUSTED", "429", "API_KEY", "PERMISSION_DENIED")):
+                log.error("Hard API error — stopping pipeline: %s", err_str)
+                emit("error", f"Gemini API quota exceeded. Please try again later or upgrade your API key.")
+                return results
             log.warning("Pipeline failed for %s: %s", company_name, e)
             continue
 

@@ -202,11 +202,16 @@ def _run_pipeline_thread(
                   "No draft generated. Company may already be drafted, or not enough data found.")
 
     except Exception as e:
-        log.exception("Pipeline error for job %s", job_id)
+        err_str = str(e)
+        if any(k in err_str for k in ("RESOURCE_EXHAUSTED", "429", "quota")):
+            msg = "Gemini API quota exceeded. Please try again later."
+        else:
+            log.exception("Pipeline error for job %s", job_id)
+            msg = err_str
         with _jobs_lock:
-            _jobs[job_id]["error"] = str(e)
+            _jobs[job_id]["error"] = msg
             _jobs[job_id]["done"] = True
-        _push(job_id, "error", str(e))
+        _push(job_id, "error", msg)
 
 
 # ---------------------------------------------------------------------------
@@ -214,13 +219,13 @@ def _run_pipeline_thread(
 # ---------------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
-async def read_root(request: Request):
+async def read_root(request: Request, job_id: str = None):
     if (r := _require_auth(request)):
         return r
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"result": None, "error": None, "job_id": None},
+        context={"result": None, "error": None, "job_id": job_id},
     )
 
 
@@ -237,18 +242,14 @@ async def run_agent(
     with _jobs_lock:
         _jobs[job_id] = {"events": [], "done": False, "result": None, "url": None, "error": None}
 
-    thread = threading.Thread(
+    threading.Thread(
         target=_run_pipeline_thread,
         args=(job_id, query, industry or None, job_title or None, _current_user_id(request)),
         daemon=True,
-    )
-    thread.start()
+    ).start()
 
-    return templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={"result": None, "error": None, "job_id": job_id, "query": query},
-    )
+    # PRG: redirect to GET so page reload doesn't resubmit the form
+    return RedirectResponse(url=f"/?job_id={job_id}", status_code=303)
 
 
 # ---------------------------------------------------------------------------
@@ -263,8 +264,22 @@ async def stream_events(request: Request, job_id: str):
             media_type="text/event-stream",
         )
     async def generator():
+        # If job is already done (e.g. page reload), send everything immediately
+        with _jobs_lock:
+            job = _jobs.get(job_id)
+        if not job:
+            yield f"data: {json.dumps({'step': 'error', 'label': '❌ Job not found', 'detail': ''})}\n\n"
+            return
+        if job["done"]:
+            for event in job["events"]:
+                yield f"data: {json.dumps(event)}\n\n"
+            payload = {"step": "__result__", "result": job["result"], "url": job.get("url")}
+            yield f"data: {json.dumps(payload)}\n\n"
+            return
+
+        # Job still running — stream events as they arrive
         last_sent = 0
-        max_wait = 600  # 10 minutes — resume pipeline can take a while
+        max_wait = 600
         waited = 0
         last_ping = 0
 
@@ -277,7 +292,6 @@ async def stream_events(request: Request, job_id: str):
                 return
 
             events = job["events"]
-            # Send any new events
             new_events_sent = False
             while last_sent < len(events):
                 yield f"data: {json.dumps(events[last_sent])}\n\n"
@@ -285,11 +299,11 @@ async def stream_events(request: Request, job_id: str):
                 new_events_sent = True
 
             if job["done"]:
-                payload = {"step": "__result__", "result": job["result"], "url": job["url"]}
+                payload = {"step": "__result__", "result": job["result"], "url": job.get("url")}
                 yield f"data: {json.dumps(payload)}\n\n"
                 return
 
-            # Send keepalive comment every 15s to prevent Render/proxy timeout
+            # Keepalive every 15s to prevent Render proxy timeout
             if not new_events_sent and (waited - last_ping) >= 15:
                 yield ": keepalive\n\n"
                 last_ping = waited
@@ -393,12 +407,12 @@ def _run_resume_thread(
 
 
 @app.get("/resume", response_class=HTMLResponse)
-async def resume_page(request: Request):
+async def resume_page(request: Request, job_id: str = None):
     if (r := _require_auth(request)):
         return r
     return templates.TemplateResponse(
         request=request, name="resume_prospect.html",
-        context={"job_id": None, "error": None},
+        context={"job_id": job_id, "error": None},
     )
 
 
@@ -435,10 +449,8 @@ async def resume_submit(
         daemon=True,
     ).start()
 
-    return templates.TemplateResponse(
-        request=request, name="resume_prospect.html",
-        context={"job_id": job_id, "error": None},
-    )
+    # PRG: redirect to GET so page reload doesn't resubmit the form
+    return RedirectResponse(url=f"/resume?job_id={job_id}", status_code=303)
 
 
 # ---------------------------------------------------------------------------
