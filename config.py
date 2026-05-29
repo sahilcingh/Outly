@@ -13,8 +13,22 @@ from dotenv import load_dotenv
 load_dotenv()
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent
-# DATA_DIR can be overridden via env var — cloud platforms mount persistent volumes here
-DATA_DIR = Path(os.getenv("DATA_DIR", str(WORKSPACE_ROOT / "data")))
+
+def _resolve_data_dir() -> Path:
+    """
+    Resolve the data directory. Falls back to the workspace data/ folder if the
+    configured path can't be created (e.g. DATA_DIR=/data without a mounted disk).
+    """
+    configured = Path(os.getenv("DATA_DIR", str(WORKSPACE_ROOT / "data")))
+    try:
+        configured.mkdir(parents=True, exist_ok=True)
+        return configured
+    except (PermissionError, OSError):
+        fallback = WORKSPACE_ROOT / "data"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+DATA_DIR = _resolve_data_dir()
 DRAFTS_DB_PATH = DATA_DIR / "drafts.db"
 
 

@@ -29,6 +29,16 @@ log = logging.getLogger(__name__)
 app = FastAPI(title="B2B Prospecting Agent")
 app.add_middleware(SessionMiddleware, secret_key=get_secret_key(), max_age=86400 * 7)  # 7-day sessions
 
+
+@app.exception_handler(Exception)
+async def global_error_handler(request: Request, exc: Exception):
+    log.exception("Unhandled error on %s", request.url)
+    return HTMLResponse(
+        content=f"<h2>Internal Server Error</h2><pre>{type(exc).__name__}: {exc}</pre>"
+                f"<p><a href='/'>← Back to home</a></p>",
+        status_code=500,
+    )
+
 # ---------------------------------------------------------------------------
 # Auth helpers
 # ---------------------------------------------------------------------------
