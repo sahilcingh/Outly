@@ -11,7 +11,7 @@ from target_context import TargetContext, resolve_target_context
 from llm.groq_client import groq_json_call
 
 GEMINI_MODEL = None  # kept for signature compatibility; unused
-PROMPT_VERSION = "v3"
+PROMPT_VERSION = "v4"
 
 
 def _drafter_system_instruction(ctx: TargetContext) -> str:
@@ -44,33 +44,37 @@ def _drafter_system_instruction(ctx: TargetContext) -> str:
         headlines = "; ".join(n["title"] for n in ctx.news_signals[:2])
         news_str = f"\nRECENT COMPANY NEWS: {headlines}"
 
-    return f"""You are a recruiter at a premier specialist staffing agency writing a cold outreach email.
+    return f"""You are a senior recruitment consultant at a premier specialist staffing agency. You are writing a professional cold outreach email on behalf of your consultancy to introduce a pre-vetted candidate for placement.
 
 RECIPIENT: {recipient}
 CANDIDATE BEING OFFERED: {role}
 INDUSTRY CONTEXT: {ctx.industry}{hiring_str}{news_str}
 
-Read the scraped website text about the target company and write ONE short, highly personalized cold email:
+Read the scraped website text about the target company carefully. Write a professional, well-structured outreach email that:
 
 Opening line: "{greeting}"
 
-Your pitch: You have a vetted {role} who can directly help with a specific initiative, challenge, or technology mentioned in the website text or signals above. Name that initiative or tech explicitly — do not be vague.
+EMAIL STRUCTURE (follow this exactly):
+1. INTRO (1-2 sentences): Briefly introduce yourself as a specialist recruitment consultant and why you are reaching out to this company specifically — reference a concrete signal (job opening, recent news, or product/tech from the website).
+2. CANDIDATE PITCH (2-3 sentences): Describe the {role} you are representing. Highlight 2-3 specific skills or achievements that directly align with the company's technology, product, or current initiatives mentioned in the website. Be specific — name the technologies or goals.
+3. VALUE PROPOSITION (1-2 sentences): Explain how placing this candidate will help the company achieve its goals — reference something specific from their website (a product feature, scaling challenge, tech stack, or expansion initiative).
+4. CALL TO ACTION (1 sentence): A clear, low-friction next step (e.g. "I'd love to share their profile — would a 20-minute call this week work for you?").
 
-Priority signals to reference (use the most relevant one):
-- If ACTIVE JOB OPENINGS are listed above, mention that you can help fill one of those roles fast.
-- If RECENT COMPANY NEWS is listed above, reference it as the reason you're reaching out now.
+Priority signals to reference:
+- If ACTIVE JOB OPENINGS are listed above, mention you have a strong candidate for that specific role.
+- If RECENT COMPANY NEWS is listed above, reference it as the reason for reaching out now.
 - Otherwise, reference a specific product, tech stack, or initiative from the website text.
 
 Rules:
-1. Under 100 words in the body.
-2. Reference 1-2 specific things (job opening, recent news, or website detail).
-3. Make it clear you are offering to place a {role} — not selling software or a service.
-4. No generic phrases ("hope you're well", "touching base", "synergy", "reaching out").
-5. End with one clear, low-friction call to action (e.g. "Worth a 15-min call?").
-6. Write in first person ("I").
+1. 150-200 words in the body — professional but not lengthy.
+2. Always make it clear this is a specialist staffing/recruitment consultancy placing a pre-vetted candidate.
+3. Name specific technologies, products, or initiatives from the company website — never be vague.
+4. No generic phrases ("hope you're well", "touching base", "synergy", "circling back").
+5. Write in first person ("I" / "we" for the agency).
+6. Sound professional, confident, and consultative — not salesy.
 
 Output STRICT JSON only:
-{{"subject": "email subject line", "body": "full email body", "rationale": "one sentence: what specific signal (job opening / news / website detail) you used and why this role fits"}}"""
+{{"subject": "compelling email subject line", "body": "full professional email body with proper paragraphs", "rationale": "one sentence: what specific signal from the website you used and why this candidate fits"}}"""
 
 
 def draft_email(
