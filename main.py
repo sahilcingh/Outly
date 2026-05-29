@@ -340,11 +340,22 @@ def run_pipeline(
                 emit("drafting", f"Writing personalized email for {result.title}...")
                 draft_data = draft_email(clean, context=ctx)
 
-                if draft_data:
+                if draft_data and all(k in draft_data for k in ("subject", "body", "rationale")):
                     passed, reasons = draft_passes_quality_gate(draft_data)
                     if not passed:
                         log.warning("Draft quality warning: %s", ", ".join(reasons))
-                    if all(k in draft_data for k in ("subject", "body", "rationale")):
+
+                    # Attach context FIRST so draft is always complete for the UI
+                    draft_data["role_to_offer"] = ctx.role_to_offer
+                    draft_data["contact_name"] = ctx.contact_name
+                    draft_data["contact_title"] = ctx.contact_title
+                    draft_data["contact_email"] = ctx.contact_email
+                    draft_data["hiring_signals"] = ctx.hiring_signals
+                    draft_data["news_signals"] = ctx.news_signals
+                    draft_data["company_name"] = result.title
+
+                    # Save to DB — failure here must not prevent the draft reaching the UI
+                    try:
                         save_draft(
                             company_name=result.title[:200],
                             company_url=result.url,
@@ -355,14 +366,8 @@ def run_pipeline(
                             user_id=user_id,
                         )
                         log.info("Draft saved [%s]: %s", PROMPT_VERSION, draft_data["subject"][:60])
-                        # Attach discovered context for callers (web UI)
-                        draft_data["role_to_offer"] = ctx.role_to_offer
-                        draft_data["contact_name"] = ctx.contact_name
-                        draft_data["contact_title"] = ctx.contact_title
-                        draft_data["contact_email"] = ctx.contact_email
-                        draft_data["hiring_signals"] = ctx.hiring_signals
-                        draft_data["news_signals"] = ctx.news_signals
-                        draft_data["company_name"] = result.title
+                    except Exception as save_err:
+                        log.warning("Could not save draft to DB (will still show in UI): %s", save_err)
 
             if run_sequence and chunks:
                 log.info("Generating 3-touch follow-up sequence...")
