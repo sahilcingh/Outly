@@ -9,12 +9,9 @@ import json
 import logging
 import re
 
-from config import get_gemini_api_key, GEMINI_DEFAULT_MODEL
-from llm.retry import gemini_call
+from llm.groq_client import groq_json_call
 
 log = logging.getLogger(__name__)
-
-GEMINI_MODEL = GEMINI_DEFAULT_MODEL
 
 _SYSTEM = """You are a senior technical recruiter. Read this candidate's resume or profile and extract structured information.
 
@@ -42,29 +39,9 @@ def extract_skills(resume_text: str) -> dict | None:
     Returns dict with role_title, skills, experience_years, industries,
     search_queries, summary — or None on failure.
     """
-    api_key = get_gemini_api_key()
-    try:
-        from google import genai
-        from google.genai.types import GenerateContentConfig
-    except ImportError:
-        raise ImportError("Install google-genai: pip install google-genai")
-
     text = resume_text[:20000] if len(resume_text) > 20000 else resume_text
-    client = genai.Client(api_key=api_key)
-
-    response = gemini_call(
-        lambda: client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=f"Candidate resume:\n\n{text}",
-            config=GenerateContentConfig(
-                system_instruction=_SYSTEM,
-                response_mime_type="application/json",
-            ),
-        ),
-        label="skills_extractor",
-    )
-
-    return _parse(response.text) if response.text else None
+    content = groq_json_call(_SYSTEM, f"Candidate resume:\n\n{text}", label="skills_extractor")
+    return _parse(content) if content else None
 
 
 def _parse(content: str) -> dict | None:

@@ -8,11 +8,10 @@ import json
 import re
 from typing import Any
 
-from config import get_gemini_api_key, GEMINI_DEFAULT_MODEL
 from target_context import TargetContext, resolve_target_context
-from llm.retry import gemini_call
+from llm.groq_client import groq_json_call
 
-GEMINI_MODEL = GEMINI_DEFAULT_MODEL
+GEMINI_MODEL = None  # kept for signature compatibility; unused
 
 
 def _escape_braces(s: str) -> str:
@@ -58,30 +57,8 @@ def build_company_profile(
     model: str = GEMINI_MODEL,
 ) -> dict[str, Any] | None:
     ctx = context if context is not None else resolve_target_context(industry, job_title)
-    api_key = get_gemini_api_key()
-
-    try:
-        from google import genai
-        from google.genai.types import GenerateContentConfig
-    except ImportError:
-        raise ImportError("Install google-genai: pip install google-genai")
-
     text = company_text[:32000] if len(company_text) > 32000 else company_text
-
-    client = genai.Client(api_key=api_key)
-    response = gemini_call(
-        lambda: client.models.generate_content(
-            model=model,
-            contents=f"Website text:\n\n{text}",
-            config=GenerateContentConfig(
-                system_instruction=_profiler_system_instruction(ctx),
-                response_mime_type="application/json",
-            ),
-        ),
-        label="profiler",
-    )
-
-    content = response.text
+    content = groq_json_call(_profiler_system_instruction(ctx), f"Company website text:\n\n{text}", label="profiler")
     return _parse_json_response(content) if content else None
 
 

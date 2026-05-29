@@ -43,13 +43,18 @@ def get_gemini_api_key() -> str:
     return require_env("GEMINI_API_KEY")
 
 
+def get_groq_api_key() -> str:
+    return require_env("GROQ_API_KEY")
+
+
 def get_database_url() -> str | None:
     """Return PostgreSQL DATABASE_URL if set, else None (falls back to SQLite)."""
     return os.getenv("DATABASE_URL", "").strip() or None
 
 
-# gemini-2.0-flash: 1500 req/day free, available on v1beta, fast and capable
-GEMINI_DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+# Groq model — llama-3.3-70b-versatile: 14,400 req/day free, very fast
+GEMINI_DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")  # kept for fallback
+GROQ_DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 
 def get_secret_key() -> str:

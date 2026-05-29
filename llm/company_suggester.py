@@ -9,11 +9,9 @@ import json
 import logging
 import re
 
-from config import get_gemini_api_key, GEMINI_DEFAULT_MODEL
-from llm.retry import gemini_call
+from llm.groq_client import groq_json_call
 
 log = logging.getLogger(__name__)
-GEMINI_MODEL = GEMINI_DEFAULT_MODEL
 
 _SYSTEM = """You are a senior technical recruiter with deep knowledge of the tech industry.
 Given a candidate's role and skills, suggest real companies that actively hire people with those skills.
@@ -44,13 +42,6 @@ def suggest_companies(
     Ask Gemini to suggest companies that hire this candidate profile.
     Returns list of {"name": str, "reason": str}.
     """
-    api_key = get_gemini_api_key()
-    try:
-        from google import genai
-        from google.genai.types import GenerateContentConfig
-    except ImportError:
-        raise ImportError("Install google-genai: pip install google-genai")
-
     skills_str = ", ".join(skills[:8])
     industry_line = f"Industry focus: {industry}" if industry else "Industry: any tech company"
 
@@ -62,20 +53,8 @@ Key skills: {skills_str}
 Suggest {count} real companies that would actively hire this candidate.
 Return a JSON array of {count} objects with "name" and "reason" fields."""
 
-    client = genai.Client(api_key=api_key)
-    response = gemini_call(
-        lambda: client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=GenerateContentConfig(
-                system_instruction=_SYSTEM,
-                response_mime_type="application/json",
-            ),
-        ),
-        label="company_suggester",
-    )
-
-    return _parse(response.text, count) if response.text else []
+    content = groq_json_call(_SYSTEM, prompt, label="company_suggester")
+    return _parse(content, count) if content else []
 
 
 def _parse(content: str, count: int) -> list[dict]:

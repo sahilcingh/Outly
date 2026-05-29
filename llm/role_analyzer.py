@@ -9,10 +9,9 @@ from __future__ import annotations
 import json
 import re
 
-from config import get_gemini_api_key, GEMINI_DEFAULT_MODEL
-from llm.retry import gemini_call
+from llm.groq_client import groq_json_call
 
-GEMINI_MODEL = GEMINI_DEFAULT_MODEL
+GEMINI_MODEL = None  # kept for signature compatibility; unused
 
 _SYSTEM = """You are a senior recruiter at a specialist staffing agency.
 Read the company website text carefully.
@@ -44,30 +43,9 @@ def infer_role_and_contact(
 
     Returns None on failure.
     """
-    api_key = get_gemini_api_key()
-
-    try:
-        from google import genai
-        from google.genai.types import GenerateContentConfig
-    except ImportError:
-        raise ImportError("Install google-genai: pip install google-genai")
-
     text = company_text[:16000] if len(company_text) > 16000 else company_text
-    client = genai.Client(api_key=api_key)
-
-    response = gemini_call(
-        lambda: client.models.generate_content(
-            model=model,
-            contents=f"Company website text:\n\n{text}",
-            config=GenerateContentConfig(
-                system_instruction=_SYSTEM,
-                response_mime_type="application/json",
-            ),
-        ),
-        label="role_analyzer",
-    )
-
-    return _parse(response.text) if response.text else None
+    content = groq_json_call(_SYSTEM, f"Company website text:\n\n{text}", label="role_analyzer")
+    return _parse(content) if content else None
 
 
 def _parse(content: str) -> dict | None:
