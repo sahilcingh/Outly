@@ -159,6 +159,9 @@ def init_db() -> None:
                     send_after TEXT
                 )
             """)
+            # Migrations for existing PostgreSQL tables missing newer columns
+            cur.execute("ALTER TABLE drafts ADD COLUMN IF NOT EXISTS user_id BIGINT")
+            cur.execute("ALTER TABLE outreach_touches ADD COLUMN IF NOT EXISTS send_after TEXT")
     else:
         DRAFTS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         with _sqlite_conn() as conn:
