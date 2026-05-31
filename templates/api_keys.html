@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Outly — API Keys</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f3f4f6; padding: 2rem; color: #111827; }
+        .container { max-width: 700px; margin: 0 auto; }
+        .card { background: white; padding: 2rem; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+        h1 { margin: 0 0 0.25rem; font-size: 1.4rem; }
+        .nav { display: flex; gap: 1rem; }
+        .nav a { color: #2563eb; text-decoration: none; font-size: 0.88rem; font-weight: 500; }
+        label { display: block; font-weight: 500; font-size: 0.88rem; margin-bottom: 0.4rem; color: #374151; }
+        input[type="text"] { width: 100%; padding: 0.55rem 0.75rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.93rem; margin-bottom: 0.75rem; }
+        .btn { padding: 0.5rem 1.25rem; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+        .btn-primary { background: #2563eb; color: white; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-danger { background: #fee2e2; color: #dc2626; border: 1px solid #fecaca; }
+        .btn-danger:hover { background: #fecaca; }
+        .new-key-box { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 1.25rem; margin-bottom: 1.5rem; }
+        .new-key-box h3 { margin: 0 0 0.5rem; color: #15803d; font-size: 1rem; }
+        .key-value { font-family: monospace; font-size: 0.88rem; background: white; border: 1px solid #d1d5db; padding: 0.65rem; border-radius: 6px; word-break: break-all; margin: 0.5rem 0; }
+        .warning { font-size: 0.82rem; color: #dc2626; margin-top: 0.5rem; }
+        .copy-btn { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; padding: 0.3rem 0.75rem; border-radius: 5px; cursor: pointer; font-size: 0.82rem; margin-top: 0.5rem; }
+        .copy-btn:hover { background: #bae6fd; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+        th { text-align: left; padding: 0.6rem 0.75rem; border-bottom: 2px solid #e5e7eb; color: #6b7280; font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
+        td { padding: 0.65rem 0.75rem; border-bottom: 1px solid #f3f4f6; }
+        .badge-active { background: #dcfce7; color: #16a34a; border-radius: 4px; padding: 2px 8px; font-size: 0.75rem; font-weight: 600; }
+        .badge-revoked { background: #fee2e2; color: #dc2626; border-radius: 4px; padding: 2px 8px; font-size: 0.75rem; font-weight: 600; }
+        .empty { color: #9ca3af; font-size: 0.9rem; text-align: center; padding: 2rem; }
+        .subtitle { color: #6b7280; font-size: 0.88rem; margin-bottom: 1.5rem; }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+            <h1>🔑 API Keys</h1>
+            <div class="nav">
+                <a href="/">🚀 Home</a>
+                <a href="/api/docs">📖 API Docs</a>
+                <a href="/logout" style="color:#6b7280;">Sign out</a>
+            </div>
+        </div>
+        <p class="subtitle">Use API keys to access Outly programmatically from your own tools, CRM, or ATS.</p>
+
+        {% if new_key %}
+        <div class="new-key-box">
+            <h3>✅ API Key Created — Copy it now!</h3>
+            <p style="font-size:0.85rem;color:#374151;margin:0 0 0.5rem;">This key will <strong>never be shown again</strong>.</p>
+            <div class="key-value" id="new-key-value">{{ new_key }}</div>
+            <button class="copy-btn" onclick="copyKey()">📋 Copy Key</button>
+            <p class="warning">⚠️ Store this key securely. Treat it like a password.</p>
+        </div>
+        <script>
+        function copyKey() {
+            navigator.clipboard.writeText(document.getElementById('new-key-value').textContent.trim());
+            document.querySelector('.copy-btn').textContent = '✅ Copied!';
+        }
+        </script>
+        {% endif %}
+
+        <form method="POST" action="/settings/api-keys" style="display:flex;gap:0.75rem;align-items:flex-end;">
+            <div style="flex:1;">
+                <label>Key Name (to identify it later)</label>
+                <input type="text" name="key_name" placeholder="e.g. My CRM Integration" required>
+            </div>
+            <button type="submit" class="btn btn-primary" style="margin-bottom:0.75rem;">+ Generate Key</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2 style="margin:0 0 1rem;font-size:1.1rem;">Your API Keys</h2>
+        {% if keys %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Key Preview</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Last Used</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for key in keys %}
+                <tr>
+                    <td><strong>{{ key.name }}</strong></td>
+                    <td style="font-family:monospace;font-size:0.82rem;color:#6b7280;">{{ key.preview }}</td>
+                    <td>
+                        {% if key.is_active %}
+                        <span class="badge-active">Active</span>
+                        {% else %}
+                        <span class="badge-revoked">Revoked</span>
+                        {% endif %}
+                    </td>
+                    <td style="color:#6b7280;">{{ key.created_at[:10] }}</td>
+                    <td style="color:#6b7280;">{{ key.last_used_at[:10] if key.last_used_at else "Never" }}</td>
+                    <td>
+                        {% if key.is_active %}
+                        <form method="POST" action="/settings/api-keys/{{ key.id }}/revoke"
+                              onsubmit="return confirm('Revoke this key? Any apps using it will stop working.')">
+                            <button type="submit" class="btn btn-danger">Revoke</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty">No API keys yet. Generate one above to get started.</div>
+        {% endif %}
+    </div>
+
+</div>
+</body>
+</html>

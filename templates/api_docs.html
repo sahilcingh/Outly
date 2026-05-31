@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Outly API Documentation</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 0; }
+        .sidebar { width: 240px; position: fixed; top: 0; left: 0; height: 100vh; background: #1e293b; padding: 1.5rem 1rem; overflow-y: auto; }
+        .sidebar h2 { font-size: 1.1rem; margin: 0 0 0.25rem; color: white; }
+        .sidebar .version { font-size: 0.75rem; color: #64748b; margin-bottom: 1.5rem; }
+        .sidebar a { display: block; padding: 0.35rem 0.75rem; border-radius: 5px; color: #94a3b8; text-decoration: none; font-size: 0.85rem; margin-bottom: 2px; }
+        .sidebar a:hover { background: #334155; color: white; }
+        .sidebar .section-label { font-size: 0.72rem; text-transform: uppercase; color: #475569; font-weight: 600; margin: 1rem 0 0.4rem 0.75rem; }
+        .main { margin-left: 240px; padding: 2.5rem 3rem; max-width: 860px; }
+        h1 { font-size: 1.8rem; margin: 0 0 0.5rem; color: white; }
+        h2 { font-size: 1.25rem; color: white; margin: 2.5rem 0 0.75rem; padding-top: 1.5rem; border-top: 1px solid #1e293b; }
+        h3 { font-size: 1rem; color: #e2e8f0; margin: 1.5rem 0 0.5rem; }
+        p { color: #94a3b8; line-height: 1.6; font-size: 0.93rem; }
+        .endpoint { background: #1e293b; border-radius: 8px; padding: 1.25rem 1.5rem; margin: 1rem 0; }
+        .method { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: 0.78rem; font-weight: 700; font-family: monospace; margin-right: 0.5rem; }
+        .post { background: #166534; color: #86efac; }
+        .get { background: #1e3a8a; color: #93c5fd; }
+        .path { font-family: monospace; font-size: 0.95rem; color: white; }
+        .desc { color: #94a3b8; font-size: 0.85rem; margin-top: 0.4rem; }
+        pre { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 1rem 1.25rem; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; margin: 0.75rem 0; }
+        code { font-family: "Fira Code", "Cascadia Code", monospace; }
+        .param-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 0.75rem 0; }
+        .param-table th { text-align: left; padding: 0.5rem 0.75rem; color: #64748b; font-size: 0.78rem; text-transform: uppercase; border-bottom: 1px solid #1e293b; }
+        .param-table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #1e293b; color: #94a3b8; }
+        .param-table td:first-child { font-family: monospace; color: #93c5fd; }
+        .param-table .req { color: #f87171; font-size: 0.72rem; font-weight: 600; }
+        .param-table .opt { color: #64748b; font-size: 0.72rem; }
+        .alert { background: #451a03; border: 1px solid #92400e; border-radius: 6px; padding: 0.75rem 1rem; font-size: 0.85rem; color: #fcd34d; margin: 1rem 0; }
+        .key-box { background: #1e293b; border: 1px solid #334155; border-radius: 6px; padding: 0.75rem 1rem; font-family: monospace; font-size: 0.85rem; color: #86efac; margin: 0.5rem 0; }
+        a.nav-link { color: #60a5fa; text-decoration: none; }
+        a.nav-link:hover { text-decoration: underline; }
+        .copy-btn { background: #334155; color: #94a3b8; border: none; padding: 0.25rem 0.65rem; border-radius: 4px; cursor: pointer; font-size: 0.75rem; float: right; }
+        .copy-btn:hover { background: #475569; color: white; }
+    </style>
+</head>
+<body>
+
+<div class="sidebar">
+    <h2>🚀 Outly API</h2>
+    <div class="version">v1 · REST · JSON</div>
+    <div class="section-label">Getting Started</div>
+    <a href="#auth">Authentication</a>
+    <a href="#base-url">Base URL</a>
+    <div class="section-label">Endpoints</div>
+    <a href="#prospect">POST /prospect</a>
+    <a href="#resume">POST /resume</a>
+    <a href="#list-drafts">GET /drafts</a>
+    <a href="#get-draft">GET /drafts/:id</a>
+    <div class="section-label">Account</div>
+    <a href="/settings/api-keys">🔑 Manage API Keys</a>
+    <a href="/" style="color:#60a5fa;">← Back to App</a>
+</div>
+
+<div class="main">
+    <h1>Outly API Documentation</h1>
+    <p>Use the Outly API to integrate AI-powered B2B recruiter outreach into your own tools, CRM, ATS, or workflows.</p>
+
+    <h2 id="auth">Authentication</h2>
+    <p>All API requests require an API key. Generate one at <a class="nav-link" href="/settings/api-keys">Settings → API Keys</a>.</p>
+    <p>Pass your key in the <code>Authorization</code> header:</p>
+    <pre><code>Authorization: Bearer outly_sk_your_key_here</code></pre>
+    <p>Or use the <code>X-API-Key</code> header:</p>
+    <pre><code>X-API-Key: outly_sk_your_key_here</code></pre>
+    <div class="alert">⚠️ Keep your API key secret. Do not expose it in frontend code or public repositories.</div>
+
+    <h2 id="base-url">Base URL</h2>
+    <div class="key-box">https://outly-me9j.onrender.com/api/v1</div>
+
+    <!-- POST /prospect -->
+    <h2 id="prospect">Prospect a Company</h2>
+    <div class="endpoint">
+        <span class="method post">POST</span>
+        <span class="path">/api/v1/prospect</span>
+        <div class="desc">Research a company and draft a personalized recruiter outreach email.</div>
+    </div>
+
+    <h3>Request Body (JSON)</h3>
+    <table class="param-table">
+        <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+        <tr><td>company</td><td>string</td><td><span class="req">required</span></td><td>Company name or website URL</td></tr>
+        <tr><td>industry</td><td>string</td><td><span class="opt">optional</span></td><td>Industry hint e.g. "Fintech", "SaaS"</td></tr>
+        <tr><td>role</td><td>string</td><td><span class="opt">optional</span></td><td>Candidate role to offer — auto-detected if omitted</td></tr>
+    </table>
+
+    <h3>Example Request</h3>
+    <pre><code>curl -X POST https://outly-me9j.onrender.com/api/v1/prospect \
+  -H "Authorization: Bearer outly_sk_your_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "company": "Razorpay",
+    "industry": "Fintech",
+    "role": "Senior Backend Engineer"
+  }'</code></pre>
+
+    <h3>Example Response</h3>
+    <pre><code>{
+  "success": true,
+  "company_name": "Razorpay",
+  "company_url": "https://razorpay.com",
+  "contact_title": "Head of Talent Acquisition",
+  "contact_name": "Priya Sharma",
+  "contact_email": null,
+  "role_to_offer": "Senior Backend Engineer",
+  "subject": "Vetted Backend Engineer for Razorpay's Payment Infrastructure",
+  "body": "Hi Priya,\n\nI'm a specialist recruitment consultant reaching out...",
+  "rationale": "Razorpay is scaling its payment infrastructure and actively hiring backend engineers.",
+  "hiring_signals": ["Senior Backend Engineer", "Platform Engineer"],
+  "news_signals": ["Razorpay raises $375M Series F"],
+  "from_cache": false
+}</code></pre>
+
+    <!-- POST /resume -->
+    <h2 id="resume">Prospect from Resume</h2>
+    <div class="endpoint">
+        <span class="method post">POST</span>
+        <span class="path">/api/v1/resume</span>
+        <div class="desc">Find matching companies for a candidate and draft outreach emails for all of them.</div>
+    </div>
+
+    <h3>Request Body (JSON)</h3>
+    <table class="param-table">
+        <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+        <tr><td>resume_text</td><td>string</td><td><span class="req">required</span></td><td>Candidate's resume or LinkedIn summary as plain text</td></tr>
+        <tr><td>industry</td><td>string</td><td><span class="opt">optional</span></td><td>Industry focus e.g. "Fintech", "Healthcare"</td></tr>
+        <tr><td>max_companies</td><td>integer</td><td><span class="opt">optional</span></td><td>Number of companies to target, 1–10 (default: 5)</td></tr>
+    </table>
+
+    <h3>Example Request</h3>
+    <pre><code>curl -X POST https://outly-me9j.onrender.com/api/v1/resume \
+  -H "Authorization: Bearer outly_sk_your_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resume_text": "Senior Java engineer with 6 years experience in Spring Boot, Kafka, PostgreSQL. Previously at Flipkart and Swiggy.",
+    "industry": "Fintech",
+    "max_companies": 5
+  }'</code></pre>
+
+    <h3>Example Response</h3>
+    <pre><code>{
+  "success": true,
+  "count": 5,
+  "drafts": [
+    {
+      "company_name": "Razorpay",
+      "company_url": "https://razorpay.com",
+      "contact_title": "Head of Engineering",
+      "role_to_offer": "Senior Java Backend Engineer",
+      "subject": "Strong Java Engineer for Razorpay's Backend",
+      "body": "Hi...",
+      "rationale": "..."
+    },
+    ...
+  ]
+}</code></pre>
+
+    <!-- GET /drafts -->
+    <h2 id="list-drafts">List Drafts</h2>
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/api/v1/drafts</span>
+        <div class="desc">List your saved drafts. Supports filtering and pagination.</div>
+    </div>
+
+    <h3>Query Parameters</h3>
+    <table class="param-table">
+        <tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+        <tr><td>status</td><td>string</td><td>Filter: draft | approved | sent | rejected</td></tr>
+        <tr><td>limit</td><td>integer</td><td>Max results (default: 20)</td></tr>
+    </table>
+
+    <h3>Example</h3>
+    <pre><code>curl https://outly-me9j.onrender.com/api/v1/drafts?status=approved \
+  -H "Authorization: Bearer outly_sk_your_key"</code></pre>
+
+    <!-- GET /drafts/:id -->
+    <h2 id="get-draft">Get a Draft</h2>
+    <div class="endpoint">
+        <span class="method get">GET</span>
+        <span class="path">/api/v1/drafts/{id}</span>
+        <div class="desc">Retrieve a single draft by its ID.</div>
+    </div>
+
+    <h3>Example</h3>
+    <pre><code>curl https://outly-me9j.onrender.com/api/v1/drafts/42 \
+  -H "Authorization: Bearer outly_sk_your_key"</code></pre>
+
+    <h2>Error Responses</h2>
+    <table class="param-table">
+        <tr><th>Status</th><th>Meaning</th></tr>
+        <tr><td>401</td><td>Invalid or missing API key</td></tr>
+        <tr><td>400</td><td>Bad request — missing required fields</td></tr>
+        <tr><td>404</td><td>Draft not found</td></tr>
+        <tr><td>422</td><td>No draft generated — insufficient company data</td></tr>
+        <tr><td>500</td><td>Internal server error</td></tr>
+    </table>
+    <pre><code>{ "success": false, "error": "Description of the error" }</code></pre>
+
+</div>
+</body>
+</html>

@@ -8,7 +8,7 @@ import threading
 import uuid
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -16,6 +16,7 @@ from config import get_secret_key
 from main import run_pipeline, run_batch_csv, run_resume_pipeline
 from tools.resume_parser import parse_resume
 from storage.users import create_user, verify_login, init_users_table
+from storage.api_keys import create_api_key, get_user_by_api_key, list_api_keys, revoke_api_key
 from storage.drafts import (
     get_draft,
     init_db,
@@ -566,6 +567,242 @@ async def mark_sent(request: Request, draft_id: int):
         return r
     update_draft_status(draft_id, "sent")
     return RedirectResponse(url="/drafts", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# API Key management UI
+# ---------------------------------------------------------------------------
+
+@app.get("/settings/api-keys", response_class=HTMLResponse)
+async def api_keys_page(request: Request):
+    if (r := _require_auth(request)):
+        return r
+    user_id = _current_user_id(request)
+    keys = list_api_keys(user_id)
+    return templates.TemplateResponse(
+        request=request, name="api_keys.html",
+        context={"keys": keys, "new_key": None, "error": None},
+    )
+
+
+@app.post("/settings/api-keys", response_class=HTMLResponse)
+async def create_key(request: Request, key_name: str = Form(...)):
+    if (r := _require_auth(request)):
+        return r
+    user_id = _current_user_id(request)
+    full_key, api_key = create_api_key(user_id, key_name.strip() or "My API Key")
+    keys = list_api_keys(user_id)
+    return templates.TemplateResponse(
+        request=request, name="api_keys.html",
+        context={"keys": keys, "new_key": full_key, "error": None},
+    )
+
+
+@app.post("/settings/api-keys/{key_id}/revoke")
+async def revoke_key(request: Request, key_id: int):
+    if (r := _require_auth(request)):
+        return r
+    revoke_api_key(key_id, _current_user_id(request))
+    return RedirectResponse(url="/settings/api-keys", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# REST API — v1
+# ---------------------------------------------------------------------------
+
+def _api_auth(request: Request) -> dict | None:
+    """Validate Bearer token from Authorization header. Returns user row or None."""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        key = auth[7:].strip()
+        return get_user_by_api_key(key)
+    # Also accept X-API-Key header
+    key = request.headers.get("X-API-Key", "").strip()
+    if key:
+        return get_user_by_api_key(key)
+    return None
+
+
+def _api_error(msg: str, status: int = 400) -> JSONResponse:
+    return JSONResponse({"success": False, "error": msg}, status_code=status)
+
+
+@app.post("/api/v1/prospect")
+async def api_prospect(request: Request):
+    """
+    Draft a personalized outreach email for a single company.
+
+    Body (JSON):
+      company    — company name or URL (required)
+      industry   — industry hint (optional)
+      role       — candidate role to offer (optional, auto-detected)
+
+    Returns the draft subject, body, contact info, and signals used.
+    """
+    user = _api_auth(request)
+    if not user:
+        return _api_error("Invalid or missing API key. Pass as: Authorization: Bearer outly_sk_...", 401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return _api_error("Request body must be valid JSON.")
+
+    company = (body.get("company") or "").strip()
+    if not company:
+        return _api_error("'company' field is required.")
+
+    industry = (body.get("industry") or "").strip() or None
+    role = (body.get("role") or "").strip() or None
+
+    try:
+        output = run_pipeline(
+            query=company,
+            run_drafter=True,
+            industry=industry,
+            job_title=role,
+            user_id=user["user_id"],
+        )
+        for result, chunks, draft_data in output:
+            if draft_data:
+                return JSONResponse({
+                    "success": True,
+                    "company_name": draft_data.get("company_name", result.title),
+                    "company_url": result.url,
+                    "contact_title": draft_data.get("contact_title"),
+                    "contact_name": draft_data.get("contact_name"),
+                    "contact_email": draft_data.get("contact_email"),
+                    "role_to_offer": draft_data.get("role_to_offer"),
+                    "subject": draft_data.get("subject"),
+                    "body": draft_data.get("body"),
+                    "rationale": draft_data.get("rationale"),
+                    "hiring_signals": draft_data.get("hiring_signals", []),
+                    "news_signals": [n.get("title") for n in draft_data.get("news_signals", [])],
+                    "from_cache": draft_data.get("from_cache", False),
+                })
+        return _api_error("No draft generated. Company may lack sufficient web content.", 422)
+    except Exception as e:
+        log.exception("API prospect error")
+        return _api_error(str(e), 500)
+
+
+@app.post("/api/v1/resume")
+async def api_resume(request: Request):
+    """
+    Find matching companies for a candidate and draft outreach emails.
+
+    Body (JSON):
+      resume_text   — candidate resume or skills summary (required)
+      industry      — industry focus (optional)
+      max_companies — number of companies to target, 1-10 (default 5)
+
+    Returns a list of draft emails, one per company.
+    """
+    user = _api_auth(request)
+    if not user:
+        return _api_error("Invalid or missing API key. Pass as: Authorization: Bearer outly_sk_...", 401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return _api_error("Request body must be valid JSON.")
+
+    resume_text = (body.get("resume_text") or "").strip()
+    if not resume_text:
+        return _api_error("'resume_text' field is required.")
+
+    industry = (body.get("industry") or "").strip() or None
+    max_companies = min(max(int(body.get("max_companies", 5)), 1), 10)
+
+    try:
+        results = run_resume_pipeline(
+            resume_text=resume_text,
+            max_companies=max_companies,
+            industry=industry,
+            user_id=user["user_id"],
+        )
+        return JSONResponse({
+            "success": True,
+            "count": len(results),
+            "drafts": [
+                {
+                    "company_name": d.get("company_name"),
+                    "company_url": d.get("company_url"),
+                    "contact_title": d.get("contact_title"),
+                    "contact_name": d.get("contact_name"),
+                    "contact_email": d.get("contact_email"),
+                    "role_to_offer": d.get("role_to_offer") or d.get("candidate_role"),
+                    "subject": d.get("subject"),
+                    "body": d.get("body"),
+                    "rationale": d.get("rationale"),
+                    "from_cache": d.get("from_cache", False),
+                }
+                for d in results
+            ],
+        })
+    except Exception as e:
+        log.exception("API resume error")
+        return _api_error(str(e), 500)
+
+
+@app.get("/api/v1/drafts")
+async def api_list_drafts(request: Request, status: str = "", limit: int = 20):
+    """List your saved drafts. Optional ?status=draft|approved|sent|rejected"""
+    user = _api_auth(request)
+    if not user:
+        return _api_error("Invalid or missing API key.", 401)
+
+    filter_status = status if status in ("draft", "approved", "sent", "rejected") else None
+    drafts = list_drafts(status=filter_status, user_id=user["user_id"])
+    return JSONResponse({
+        "success": True,
+        "count": len(drafts[:limit]),
+        "drafts": [
+            {
+                "id": d.id,
+                "company_name": d.company_name,
+                "company_url": d.company_url,
+                "subject": d.subject,
+                "body": d.body,
+                "status": d.status,
+                "created_at": d.created_at,
+            }
+            for d in drafts[:limit]
+        ],
+    })
+
+
+@app.get("/api/v1/drafts/{draft_id}")
+async def api_get_draft(request: Request, draft_id: int):
+    """Get a single draft by ID."""
+    user = _api_auth(request)
+    if not user:
+        return _api_error("Invalid or missing API key.", 401)
+
+    draft = get_draft(draft_id)
+    if not draft or draft.user_id != user["user_id"]:
+        return _api_error("Draft not found.", 404)
+
+    return JSONResponse({
+        "success": True,
+        "draft": {
+            "id": draft.id,
+            "company_name": draft.company_name,
+            "company_url": draft.company_url,
+            "subject": draft.subject,
+            "body": draft.body,
+            "rationale": draft.rationale,
+            "status": draft.status,
+            "created_at": draft.created_at,
+        },
+    })
+
+
+@app.get("/api/docs", response_class=HTMLResponse)
+async def api_docs(request: Request):
+    if (r := _require_auth(request)):
+        return r
+    return templates.TemplateResponse(request=request, name="api_docs.html", context={})
 
 
 # ---------------------------------------------------------------------------
