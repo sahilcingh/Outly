@@ -33,10 +33,6 @@ from storage.jobs import (
     update_job_status,
     update_cover_letter,
     job_already_saved,
-    set_telegram_pending,
-    set_awaiting_feedback,
-    save_revision,
-    get_awaiting_feedback_job,
 )
 
 log = logging.getLogger(__name__)
@@ -97,10 +93,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="B2B Prospecting Agent", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=get_secret_key(), max_age=86400 * 7)
-
-# In-memory Telegram conversation state: chat_id → job_app_id
-# Tracks which job we're waiting for feedback on per user
-_tg_awaiting_feedback: dict[int, int] = {}
 
 
 @app.exception_handler(Exception)
@@ -889,22 +881,11 @@ async def telegram_webhook(request: Request):
     except Exception:
         return JSONResponse({"ok": True})
 
-    # Callback query (inline button pressed: Approve / Reject)
+    # Stray callback (e.g. an old button in chat history) — just acknowledge it.
     if "callback_query" in update:
-        cb   = update["callback_query"]
-        data = cb.get("data", "")
-        chat_id = cb["from"]["id"]
-        cqid = cb["id"]
-
-        if data.startswith("approve_"):
-            job_id = int(data.split("_", 1)[1])
-            threading.Thread(target=_tg_approve, args=(job_id, chat_id), daemon=True).start()
-        elif data.startswith("reject_"):
-            job_id = int(data.split("_", 1)[1])
-            _tg_reject(job_id, chat_id)
-
         from tools.telegram_bot import answer_callback
-        answer_callback(cqid)
+        answer_callback(update["callback_query"]["id"],
+                        "Applications are manual now — open the PDF and tap Apply.")
         return JSONResponse({"ok": True})
 
     # Message (text or document)
@@ -937,129 +918,14 @@ async def telegram_webhook(request: Request):
         elif text == "/help":
             _tg_help(chat_id)
         else:
-            _tg_handle_feedback(text, chat_id)
+            from tools.telegram_bot import send_message
+            send_message("I didn't recognize that. Send /help for commands, "
+                         "/queue for your jobs PDF, or attach a resume PDF to update your profile.")
 
     return JSONResponse({"ok": True})
 
 
 # ── Telegram action handlers ────────────────────────────────────────────────
-
-def _tg_approve(job_id: int, chat_id: int) -> None:
-    from tools.telegram_bot import send_message
-    from tools.email_sender import send_application_email
-
-    job = get_job_application(job_id)
-    if not job or job.status in ("applied",):
-        send_message(f"⚠️ Job #{job_id} is already processed.")
-        return
-
-    update_job_status(job_id, "approved")
-
-    if job.apply_method == "email" and job.contact_email:
-        success = send_application_email(
-            to_email=job.contact_email,
-            subject=job.subject_line or f"Application for {job.job_title}",
-            body=job.cover_letter or "",
-            from_name=job.candidate_name or "",
-        )
-        if success:
-            update_job_status(job_id, "applied")
-            send_message(
-                f"✅ *Application sent!*\n"
-                f"*{job.job_title}* at *{job.company_name}*\n"
-                f"📧 Email delivered to {job.contact_email}"
-            )
-        else:
-            send_message(
-                f"⚠️ Email send failed for *{job.company_name}*.\n"
-                f"Please send manually to: `{job.contact_email}`\n"
-                f"Subject: `{job.subject_line}`"
-            )
-    else:
-        link = job.ats_url or job.job_url
-        send_message(
-            f"✅ *Approved — apply here:*\n{link}\n\n"
-            f"📋 Subject: `{job.subject_line}`\n\n"
-            f"Copy your cover letter from the web app and paste into the form.\n"
-            f"Reply `/applied_{job_id}` when done."
-        )
-
-
-def _tg_reject(job_id: int, chat_id: int) -> None:
-    from tools.telegram_bot import send_message
-
-    job = get_job_application(job_id)
-    if not job:
-        return
-
-    if job.revision_count >= 1:
-        # 2nd rejection — put back in queue for next scheduled run
-        update_job_status(job_id, "queued")
-        send_message(
-            f"⏭️ *Skipped* — {job.company_name}\n"
-            f"Will surface again in the next scheduled run."
-        )
-        return
-
-    # 1st rejection — ask for changes
-    set_awaiting_feedback(job_id)
-    _tg_awaiting_feedback[chat_id] = job_id
-    send_message(
-        f"📝 What changes would you like for *{job.job_title}* at *{job.company_name}*?\n\n"
-        f"Reply with your feedback and I'll rewrite the cover letter."
-    )
-
-
-def _tg_handle_feedback(text: str, chat_id: int) -> None:
-    from tools.telegram_bot import send_message, send_job_for_approval
-    from llm.cover_letter import generate_cover_letter
-    from storage.profiles import load_profile
-
-    # Look up in-memory state first; fall back to DB query
-    job_id = _tg_awaiting_feedback.get(chat_id)
-    if not job_id:
-        job = get_awaiting_feedback_job(user_id=None)
-        if job:
-            job_id = job.id
-    if not job_id:
-        send_message("No job awaiting feedback. Use /help for available commands.")
-        return
-
-    job = get_job_application(job_id)
-    if not job:
-        _tg_awaiting_feedback.pop(chat_id, None)
-        return
-
-    send_message("✍️ Rewriting cover letter with your feedback…")
-
-    profile = load_profile() or {}
-    try:
-        cl = generate_cover_letter(
-            job_title=job.job_title,
-            company=job.company_name,
-            location=job.location,
-            description=job.job_description,
-            candidate_profile=profile,
-            candidate_name=job.candidate_name,
-            revision_feedback=text,
-        )
-        new_letter  = cl.get("cover_letter", job.cover_letter)
-        new_subject = cl.get("subject_line", job.subject_line)
-    except Exception as e:
-        log.error("Cover letter regeneration failed: %s", e)
-        send_message(f"⚠️ Could not regenerate cover letter: {e}")
-        return
-
-    save_revision(job_id, text, new_letter)
-    _tg_awaiting_feedback.pop(chat_id, None)
-
-    # Reload updated job and re-send for approval
-    updated_job = get_job_application(job_id)
-    if updated_job:
-        msg_id = send_job_for_approval(updated_job)
-        if msg_id:
-            set_telegram_pending(job_id, msg_id)
-
 
 def _tg_handle_resume(msg: dict, chat_id: int) -> None:
     from tools.telegram_bot import send_message
@@ -1128,11 +994,11 @@ def _tg_send_queue_pdf(chat_id: int) -> None:
 
     user_id = get_scheduler_user_id()
     all_jobs = list_job_applications(user_id=user_id)
-    # Show actionable jobs: queued, pending review, awaiting feedback, approved
-    active = [j for j in all_jobs if j.status in
-              ("queued", "telegram_pending", "awaiting_feedback", "approved")]
+    # Show jobs not yet applied to: freshly queued + already sent in a digest
+    active = [j for j in all_jobs if j.status in ("queued", "sent")]
     if not active:
-        send_message("📭 No active jobs in your queue right now.")
+        send_message("📭 No active jobs right now. Send your resume PDF or wait "
+                     "for the next scheduled search (9:30 AM / 2:30 PM IST).")
         return
     try:
         pdf_bytes = build_jobs_pdf(active, title="Job Review Queue")
@@ -1234,14 +1100,18 @@ async def telegram_set_webhook(request: Request, url: str = None):
 def _tg_help(chat_id: int) -> None:
     from tools.telegram_bot import send_message
     send_message(
-        "🤖 *Outly Job Bot — Commands*\n\n"
-        "📄 *Send PDF* — Update your resume (triggers next search)\n"
-        "/queue — Get a PDF of all your active jobs with full details\n"
-        "/status — Show application counts by status\n"
-        f"`/applied_ID` — Mark job #ID as applied (after ATS submit)\n"
+        "🤖 *Outly Job Bot*\n\n"
+        "I search jobs for you on a schedule and send a *PDF* of the best matches. "
+        "Each job has a tappable *Apply* link — open the PDF, pick the ones you like, "
+        "and apply directly.\n\n"
+        "*Commands*\n"
+        "📄 *Send a resume PDF* — update your profile (used in the next search)\n"
+        "/queue — Get the PDF of your current matched jobs\n"
+        "/status — Show job counts by status\n"
+        "`/applied_ID` — Mark job #ID as applied\n"
         "/help — Show this message\n\n"
         "🕐 *Auto-schedule:* Weekdays 9:30 AM & 2:30 PM IST\n"
-        "Mon: 20 apps | Other days: 10 apps"
+        "Mon: 20 jobs | Other days: 10 jobs"
     )
 
 

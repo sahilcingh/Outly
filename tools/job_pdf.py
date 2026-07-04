@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import logging
+from urllib.parse import quote
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +51,23 @@ def _score_color(score: int):
     if score >= 40:
         return _YELLOW
     return _RED
+
+
+def _apply_link(job) -> tuple[str, str]:
+    """
+    Return (url, button_label) for the one-tap apply action.
+
+    For email jobs, builds a mailto: link pre-filled with the subject and full
+    cover letter so tapping opens the mail app ready to send. For everything
+    else, links straight to the job / ATS posting.
+    """
+    if job.apply_method == "email" and job.contact_email:
+        subject = job.subject_line or f"Application for {job.job_title}"
+        body = job.cover_letter or ""
+        url = f"mailto:{job.contact_email}?subject={quote(subject)}&body={quote(body)}"
+        return url, "APPLY BY EMAIL  (opens your mail app, pre-filled)"
+    target = job.ats_url or job.job_url
+    return target, "APPLY / VIEW JOB  (tap to open)"
 
 
 def build_jobs_pdf(jobs: list, title: str = "Job Review Queue") -> bytes:
@@ -134,19 +152,24 @@ def _render_job(pdf, job, idx: int, epw: float) -> None:
     ]
     meta = "  |  ".join(b for b in meta_bits if b)
     pdf.multi_cell(0, 4, _san(meta), new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(1)
+    pdf.ln(1.5)
 
-    # ── Apply target ────────────────────────────────────────────────────────────
-    pdf.set_font("Helvetica", "", 8)
-    pdf.set_text_color(*_ORANGE)
+    # ── APPLY button (clickable) ────────────────────────────────────────────────
+    apply_url, label = _apply_link(job)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(*_ORANGE)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 8, _san(label), fill=True, align="C", link=apply_url,
+             new_x="LMARGIN", new_y="NEXT")
+    # Plain-text target below, so the address/URL is visible & copyable too
+    pdf.set_font("Helvetica", "", 7)
+    pdf.set_text_color(*_GRAY)
     if job.apply_method == "email" and job.contact_email:
-        apply_line = f"Apply by email: {job.contact_email}"
-    elif job.ats_url:
-        apply_line = f"Apply via ATS: {job.ats_url}"
+        target_txt = f"Email: {job.contact_email}"
     else:
-        apply_line = f"Job link: {job.job_url}"
-    pdf.multi_cell(0, 4, _san(apply_line), new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(1)
+        target_txt = job.ats_url or job.job_url
+    pdf.multi_cell(0, 4, _san(target_txt), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1.5)
 
     # ── Match rationale ─────────────────────────────────────────────────────────
     if job.match_rationale:

@@ -164,16 +164,16 @@ def _search_and_queue(profile: dict, limit: int) -> None:
 
 
 def _dispatch_queued_jobs(user_id: int, limit: int) -> None:
-    """Send up to `limit` queued jobs to Telegram for approval.
+    """Build a PDF digest of up to `limit` queued jobs and send it to Telegram.
 
-    Generates a cover letter on the fly for any job missing one, so jobs that
-    were queued in an earlier run (without a pre-generated letter) still go out
-    complete.
+    No approve/reject step — the user reads the PDF and applies directly via the
+    tappable apply links. Dispatched jobs are marked 'sent' so they don't
+    reappear in every future digest. A cover letter is filled in lazily for any
+    job missing one before it goes into the PDF.
     """
     from storage.jobs import (
-        get_queued_jobs, set_telegram_pending, update_cover_letter, get_job_application
+        get_queued_jobs, update_cover_letter, get_job_application, update_job_status
     )
-    from tools.telegram_bot import send_job_for_approval, send_document
     from llm.cover_letter import generate_cover_letter
     from storage.profiles import load_profile
 
@@ -183,7 +183,7 @@ def _dispatch_queued_jobs(user_id: int, limit: int) -> None:
 
     profile = load_profile() or {}
 
-    # First pass: ensure every job has a cover letter (fill lazily if missing)
+    # Ensure every job has a cover letter (fill lazily if missing)
     finalized = []
     for job in queued:
         if not (job.cover_letter or "").strip() and (job.job_description or "").strip():
@@ -204,19 +204,15 @@ def _dispatch_queued_jobs(user_id: int, limit: int) -> None:
                 log.warning("Lazy cover letter failed for #%d: %s", job.id, e)
         finalized.append(job)
 
-    # Send the full PDF digest first (all data, same as the Job Queue page)
+    # Send the full PDF digest (all data + tappable apply links)
     _send_jobs_pdf(finalized)
 
-    # Then send each job as an interactive Approve/Reject message
+    # Mark them 'sent' so the next run's digest only carries fresh jobs
     for job in finalized:
         try:
-            msg_id = send_job_for_approval(job)
-            if msg_id:
-                set_telegram_pending(job.id, msg_id)
-            else:
-                log.warning("Could not send job #%d to Telegram", job.id)
+            update_job_status(job.id, "sent")
         except Exception as e:
-            log.error("dispatch_queued_jobs error for job #%d: %s", job.id, e)
+            log.warning("Could not mark job #%d sent: %s", job.id, e)
 
 
 def _send_jobs_pdf(jobs: list) -> None:
