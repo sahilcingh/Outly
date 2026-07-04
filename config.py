@@ -86,3 +86,37 @@ def get_smtp_config() -> dict | None:
         "from_addr": os.getenv("SMTP_FROM", user),
         "use_tls": os.getenv("SMTP_TLS", "true").lower() != "false",
     }
+
+
+def get_gmail_config() -> dict | None:
+    """Gmail SMTP config using GMAIL_USER + GMAIL_APP_PASSWORD."""
+    user = os.getenv("GMAIL_USER", "").strip()
+    password = os.getenv("GMAIL_APP_PASSWORD", "").strip()
+    if not (user and password):
+        return None
+    return {
+        "host": "smtp.gmail.com",
+        "port": 587,
+        "user": user,
+        "password": password,
+        "from_addr": user,
+        "use_tls": True,
+    }
+
+
+def get_telegram_token() -> str | None:
+    return os.getenv("TELEGRAM_BOT_TOKEN", "").strip() or None
+
+
+def get_telegram_chat_id() -> str | None:
+    return os.getenv("TELEGRAM_CHAT_ID", "").strip() or None
+
+
+def get_render_url() -> str | None:
+    """Public URL of the Render deployment — used to register Telegram webhook."""
+    return os.getenv("RENDER_EXTERNAL_URL", "").strip() or None
+
+
+def get_scheduler_user_id() -> int:
+    """user_id used for scheduler-initiated job searches. Defaults to 1."""
+    return int(os.getenv("SCHEDULER_USER_ID", "1"))

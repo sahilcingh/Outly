@@ -6,13 +6,14 @@ import logging
 import os
 import threading
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from config import get_secret_key
+from config import get_secret_key, get_render_url, get_telegram_token, get_scheduler_user_id
 from main import run_pipeline, run_batch_csv, run_resume_pipeline
 from tools.resume_parser import parse_resume
 from storage.users import create_user, verify_login, init_users_table
@@ -24,11 +25,82 @@ from storage.drafts import (
     save_draft,
     update_draft_status,
 )
+from storage.jobs import (
+    init_jobs_table,
+    save_job_application,
+    list_job_applications,
+    get_job_application,
+    update_job_status,
+    update_cover_letter,
+    job_already_saved,
+    set_telegram_pending,
+    set_awaiting_feedback,
+    save_revision,
+    get_awaiting_feedback_job,
+)
 
 log = logging.getLogger(__name__)
 
-app = FastAPI(title="B2B Prospecting Agent")
-app.add_middleware(SessionMiddleware, secret_key=get_secret_key(), max_age=86400 * 7)  # 7-day sessions
+# ---------------------------------------------------------------------------
+# APScheduler
+# ---------------------------------------------------------------------------
+
+_scheduler = None
+
+def _start_scheduler() -> None:
+    global _scheduler
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from apscheduler.triggers.cron import CronTrigger
+        import pytz
+        from scheduler.job_runner import run_scheduled_search
+
+        IST = pytz.timezone("Asia/Kolkata")
+        _scheduler = BackgroundScheduler(timezone=IST)
+        _scheduler.add_job(
+            run_scheduled_search,
+            CronTrigger(day_of_week="mon-fri", hour=9, minute=30, timezone=IST),
+            id="morning_search",
+        )
+        _scheduler.add_job(
+            run_scheduled_search,
+            CronTrigger(day_of_week="mon-fri", hour=14, minute=30, timezone=IST),
+            id="afternoon_search",
+        )
+        _scheduler.start()
+        log.info("APScheduler started (09:30 + 14:30 IST, weekdays)")
+    except Exception as e:
+        log.warning("APScheduler not started: %s", e)
+
+
+def _register_telegram_webhook() -> None:
+    render_url = get_render_url()
+    if not render_url or not get_telegram_token():
+        log.info("Telegram webhook not registered (RENDER_EXTERNAL_URL or TELEGRAM_BOT_TOKEN missing)")
+        return
+    try:
+        from tools.telegram_bot import register_webhook
+        webhook_url = f"{render_url.rstrip('/')}/telegram/webhook"
+        register_webhook(webhook_url)
+    except Exception as e:
+        log.warning("Telegram webhook registration failed: %s", e)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _start_scheduler()
+    _register_telegram_webhook()
+    yield
+    if _scheduler:
+        _scheduler.shutdown(wait=False)
+
+
+app = FastAPI(title="B2B Prospecting Agent", lifespan=lifespan)
+app.add_middleware(SessionMiddleware, secret_key=get_secret_key(), max_age=86400 * 7)
+
+# In-memory Telegram conversation state: chat_id → job_app_id
+# Tracks which job we're waiting for feedback on per user
+_tg_awaiting_feedback: dict[int, int] = {}
 
 
 @app.exception_handler(Exception)
@@ -803,6 +875,691 @@ async def api_docs(request: Request):
     if (r := _require_auth(request)):
         return r
     return templates.TemplateResponse(request=request, name="api_docs.html", context={})
+
+
+# ---------------------------------------------------------------------------
+# Telegram Webhook
+# ---------------------------------------------------------------------------
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request):
+    """Receive updates from Telegram Bot API."""
+    try:
+        update = await request.json()
+    except Exception:
+        return JSONResponse({"ok": True})
+
+    # Callback query (inline button pressed: Approve / Reject)
+    if "callback_query" in update:
+        cb   = update["callback_query"]
+        data = cb.get("data", "")
+        chat_id = cb["from"]["id"]
+        cqid = cb["id"]
+
+        if data.startswith("approve_"):
+            job_id = int(data.split("_", 1)[1])
+            threading.Thread(target=_tg_approve, args=(job_id, chat_id), daemon=True).start()
+        elif data.startswith("reject_"):
+            job_id = int(data.split("_", 1)[1])
+            _tg_reject(job_id, chat_id)
+
+        from tools.telegram_bot import answer_callback
+        answer_callback(cqid)
+        return JSONResponse({"ok": True})
+
+    # Message (text or document)
+    if "message" in update:
+        msg     = update["message"]
+        chat_id = msg["chat"]["id"]
+
+        if "document" in msg:
+            threading.Thread(target=_tg_handle_resume, args=(msg, chat_id), daemon=True).start()
+            return JSONResponse({"ok": True})
+
+        text = (msg.get("text") or "").strip()
+        if not text:
+            return JSONResponse({"ok": True})
+
+        if text.startswith("/applied_"):
+            try:
+                job_id = int(text.split("_", 1)[1])
+                update_job_status(job_id, "applied")
+                from tools.telegram_bot import send_message
+                send_message(f"✅ Job #{job_id} marked as applied!")
+            except Exception:
+                pass
+        elif text in ("/start", "/Start"):
+            _tg_help(chat_id)
+        elif text == "/status":
+            _tg_status(chat_id)
+        elif text == "/help":
+            _tg_help(chat_id)
+        else:
+            _tg_handle_feedback(text, chat_id)
+
+    return JSONResponse({"ok": True})
+
+
+# ── Telegram action handlers ────────────────────────────────────────────────
+
+def _tg_approve(job_id: int, chat_id: int) -> None:
+    from tools.telegram_bot import send_message
+    from tools.email_sender import send_application_email
+
+    job = get_job_application(job_id)
+    if not job or job.status in ("applied",):
+        send_message(f"⚠️ Job #{job_id} is already processed.")
+        return
+
+    update_job_status(job_id, "approved")
+
+    if job.apply_method == "email" and job.contact_email:
+        success = send_application_email(
+            to_email=job.contact_email,
+            subject=job.subject_line or f"Application for {job.job_title}",
+            body=job.cover_letter or "",
+            from_name=job.candidate_name or "",
+        )
+        if success:
+            update_job_status(job_id, "applied")
+            send_message(
+                f"✅ *Application sent!*\n"
+                f"*{job.job_title}* at *{job.company_name}*\n"
+                f"📧 Email delivered to {job.contact_email}"
+            )
+        else:
+            send_message(
+                f"⚠️ Email send failed for *{job.company_name}*.\n"
+                f"Please send manually to: `{job.contact_email}`\n"
+                f"Subject: `{job.subject_line}`"
+            )
+    else:
+        link = job.ats_url or job.job_url
+        send_message(
+            f"✅ *Approved — apply here:*\n{link}\n\n"
+            f"📋 Subject: `{job.subject_line}`\n\n"
+            f"Copy your cover letter from the web app and paste into the form.\n"
+            f"Reply `/applied_{job_id}` when done."
+        )
+
+
+def _tg_reject(job_id: int, chat_id: int) -> None:
+    from tools.telegram_bot import send_message
+
+    job = get_job_application(job_id)
+    if not job:
+        return
+
+    if job.revision_count >= 1:
+        # 2nd rejection — put back in queue for next scheduled run
+        update_job_status(job_id, "queued")
+        send_message(
+            f"⏭️ *Skipped* — {job.company_name}\n"
+            f"Will surface again in the next scheduled run."
+        )
+        return
+
+    # 1st rejection — ask for changes
+    set_awaiting_feedback(job_id)
+    _tg_awaiting_feedback[chat_id] = job_id
+    send_message(
+        f"📝 What changes would you like for *{job.job_title}* at *{job.company_name}*?\n\n"
+        f"Reply with your feedback and I'll rewrite the cover letter."
+    )
+
+
+def _tg_handle_feedback(text: str, chat_id: int) -> None:
+    from tools.telegram_bot import send_message, send_job_for_approval
+    from llm.cover_letter import generate_cover_letter
+    from storage.profiles import load_profile
+
+    # Look up in-memory state first; fall back to DB query
+    job_id = _tg_awaiting_feedback.get(chat_id)
+    if not job_id:
+        job = get_awaiting_feedback_job(user_id=None)
+        if job:
+            job_id = job.id
+    if not job_id:
+        send_message("No job awaiting feedback. Use /help for available commands.")
+        return
+
+    job = get_job_application(job_id)
+    if not job:
+        _tg_awaiting_feedback.pop(chat_id, None)
+        return
+
+    send_message("✍️ Rewriting cover letter with your feedback…")
+
+    profile = load_profile() or {}
+    try:
+        cl = generate_cover_letter(
+            job_title=job.job_title,
+            company=job.company_name,
+            location=job.location,
+            description=job.job_description,
+            candidate_profile=profile,
+            candidate_name=job.candidate_name,
+            revision_feedback=text,
+        )
+        new_letter  = cl.get("cover_letter", job.cover_letter)
+        new_subject = cl.get("subject_line", job.subject_line)
+    except Exception as e:
+        log.error("Cover letter regeneration failed: %s", e)
+        send_message(f"⚠️ Could not regenerate cover letter: {e}")
+        return
+
+    save_revision(job_id, text, new_letter)
+    _tg_awaiting_feedback.pop(chat_id, None)
+
+    # Reload updated job and re-send for approval
+    updated_job = get_job_application(job_id)
+    if updated_job:
+        msg_id = send_job_for_approval(updated_job)
+        if msg_id:
+            set_telegram_pending(job_id, msg_id)
+
+
+def _tg_handle_resume(msg: dict, chat_id: int) -> None:
+    from tools.telegram_bot import send_message
+    from tools.resume_parser import parse_resume
+    from llm.skills_extractor import extract_skills
+    from storage.profiles import save_profile
+
+    doc = msg.get("document", {})
+    file_id = doc.get("file_id")
+    file_name = doc.get("file_name", "")
+    mime = doc.get("mime_type", "")
+
+    is_pdf = "pdf" in mime or file_name.lower().endswith(".pdf")
+    is_doc = any(file_name.lower().endswith(ext) for ext in (".doc", ".docx", ".txt"))
+
+    if not (is_pdf or is_doc):
+        send_message("Please send your resume as a PDF, DOCX, or TXT file.")
+        return
+
+    send_message("📄 Got your resume — parsing now…")
+
+    from tools.telegram_bot import download_document
+    raw = download_document(file_id)
+    if not raw:
+        send_message("⚠️ Could not download the file. Please try again.")
+        return
+
+    try:
+        text = parse_resume(raw, file_name or "resume.pdf")
+    except Exception as e:
+        send_message(f"⚠️ Could not parse file: {e}")
+        return
+
+    if not text or len(text.strip()) < 50:
+        send_message("⚠️ The file appears empty or unreadable. Try a PDF with selectable text.")
+        return
+
+    send_message("🔍 Extracting your skills and role…")
+    try:
+        profile = extract_skills(text)
+    except Exception as e:
+        send_message(f"⚠️ Skills extraction failed: {e}")
+        return
+
+    if not profile:
+        send_message("⚠️ Could not extract profile. Try pasting your resume text via the web app.")
+        return
+
+    save_profile(profile)
+
+    role   = profile.get("role_title", "Unknown")
+    skills = ", ".join(profile.get("skills", [])[:6])
+    send_message(
+        f"✅ *Resume saved!*\n\n"
+        f"*Role:* {role}\n"
+        f"*Skills:* {skills}\n\n"
+        f"I'll use this profile at the next scheduled job search (9:30 AM or 2:30 PM IST)."
+    )
+
+
+def _tg_status(chat_id: int) -> None:
+    from tools.telegram_bot import send_message
+    from storage.jobs import list_job_applications
+    user_id = get_scheduler_user_id()
+    all_jobs = list_job_applications(user_id=user_id)
+    counts = {}
+    for j in all_jobs:
+        counts[j.status] = counts.get(j.status, 0) + 1
+
+    lines = [f"📊 *Job Application Status*\n"]
+    for status, count in sorted(counts.items()):
+        emoji = {"queued": "⏳", "telegram_pending": "👀", "awaiting_feedback": "📝",
+                 "approved": "✅", "applied": "🎉", "rejected": "❌"}.get(status, "•")
+        lines.append(f"{emoji} {status.replace('_', ' ').title()}: {count}")
+    send_message("\n".join(lines))
+
+
+@app.get("/telegram/test")
+async def telegram_test(request: Request):
+    """Dev helper — verify TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID by sending a test message."""
+    from config import get_telegram_token, get_telegram_chat_id
+    import requests as _req
+
+    token   = get_telegram_token()
+    chat_id = get_telegram_chat_id()
+
+    if not token:
+        return JSONResponse({"ok": False, "error": "TELEGRAM_BOT_TOKEN not set in .env"}, status_code=500)
+    if not chat_id:
+        return JSONResponse({"ok": False, "error": "TELEGRAM_CHAT_ID not set in .env"}, status_code=500)
+
+    # Call Telegram API directly so we can return the raw error
+    try:
+        resp = _req.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={
+                "chat_id":    chat_id,
+                "text":       "👋 *Outly bot connected!* Token and Chat ID are working.",
+                "parse_mode": "Markdown",
+            },
+            timeout=10,
+        )
+        data = resp.json()
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"Network error: {e}"}, status_code=500)
+
+    if data.get("ok"):
+        return JSONResponse({"ok": True, "message_id": data["result"]["message_id"], "chat_id": chat_id})
+
+    # Return the raw Telegram error so we know exactly what's wrong
+    return JSONResponse({
+        "ok":          False,
+        "tg_error":    data.get("description"),
+        "error_code":  data.get("error_code"),
+        "token_used":  f"{token[:10]}...{token[-4:]}",
+        "chat_id_used": chat_id,
+    }, status_code=500)
+
+
+@app.get("/telegram/webhook-info")
+async def telegram_webhook_info():
+    """Show current webhook status from Telegram."""
+    from config import get_telegram_token
+    import requests as _req
+    token = get_telegram_token()
+    if not token:
+        return JSONResponse({"ok": False, "error": "TELEGRAM_BOT_TOKEN not set"}, status_code=500)
+    resp = _req.get(f"https://api.telegram.org/bot{token}/getWebhookInfo", timeout=10)
+    return JSONResponse(resp.json())
+
+
+@app.post("/telegram/set-webhook")
+async def telegram_set_webhook(request: Request, url: str = None):
+    """
+    Manually register a webhook URL. Useful for local dev with ngrok.
+    POST /telegram/set-webhook?url=https://xxxx.ngrok.io
+    """
+    from tools.telegram_bot import register_webhook
+    if not url:
+        body = await request.json()
+        url = body.get("url", "")
+    if not url:
+        return JSONResponse({"ok": False, "error": "url required"}, status_code=400)
+    webhook_url = f"{url.rstrip('/')}/telegram/webhook"
+    ok = register_webhook(webhook_url)
+    return JSONResponse({"ok": ok, "webhook_url": webhook_url})
+
+
+def _tg_help(chat_id: int) -> None:
+    from tools.telegram_bot import send_message
+    send_message(
+        "🤖 *Outly Job Bot — Commands*\n\n"
+        "📄 *Send PDF* — Update your resume (triggers next search)\n"
+        "/status — Show application counts by status\n"
+        f"`/applied_ID` — Mark job #ID as applied (after ATS submit)\n"
+        "/help — Show this message\n\n"
+        "🕐 *Auto-schedule:* Weekdays 9:30 AM & 2:30 PM IST\n"
+        "Mon: 20 apps | Other days: 10 apps"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Job Application Automation
+# ---------------------------------------------------------------------------
+
+_JOB_STEP_LABELS = {
+    "parsing_resume": "📄 Parsing resume...",
+    "extracting":     "🔍 Extracting candidate profile...",
+    "profile_ready":  "✅ Profile extracted",
+    "searching":      "🔎 Searching LinkedIn & Indeed...",
+    "scoring":        "🧠 Scoring job matches...",
+    "generating":     "✍️  Writing cover letters...",
+    "saving":         "💾 Saving to review queue...",
+    "done":           "🎉 Jobs queued for your review!",
+    "error":          "❌ Error",
+}
+
+
+def _run_job_search_thread(
+    job_id: str,
+    resume_text: str,
+    keywords: str,
+    location: str,
+    min_score: int,
+    remote_only: bool,
+    user_id: int | None,
+    candidate_name: str,
+) -> None:
+    from llm.skills_extractor import extract_skills
+    from tools.job_search import search_jobs
+    from llm.job_matcher import score_jobs_parallel
+    from llm.cover_letter import generate_cover_letter
+
+    def emit(step: str, detail: str = "") -> None:
+        label = _JOB_STEP_LABELS.get(step, step)
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id]["events"].append({"step": step, "label": label, "detail": detail})
+
+    try:
+        init_db()
+        init_jobs_table()
+
+        emit("extracting", "Reading your resume...")
+        profile = extract_skills(resume_text)
+        if not profile:
+            emit("error", "Could not extract profile from resume. Try pasting the text directly.")
+            with _jobs_lock:
+                _jobs[job_id]["done"] = True
+            return
+
+        role_title = profile.get("role_title", "Software Engineer")
+        skills = profile.get("skills", [])
+        summary = profile.get("summary", "")
+        emit("profile_ready", f"Role: {role_title} | Skills: {', '.join(skills[:5])}")
+
+        # Search jobs
+        emit("searching", f"Searching for '{keywords or role_title}' in {location}...")
+        query = keywords.strip() if keywords.strip() else role_title
+        listings = search_jobs(
+            query=query,
+            location=location or "Remote",
+            results_per_site=20,
+            hours_old=168,
+            remote_only=remote_only,
+        )
+
+        if not listings:
+            emit("error", "No jobs found. Try different keywords or location.")
+            with _jobs_lock:
+                _jobs[job_id]["done"] = True
+                _jobs[job_id]["result"] = {"saved": 0}
+            return
+
+        # Filter already-saved (avoid duplicates)
+        new_listings = [l for l in listings if not job_already_saved(user_id, l.job_url)]
+        emit("scoring", f"Scoring {len(new_listings)} new jobs...")
+
+        if not new_listings:
+            emit("done", "All found jobs are already in your queue.")
+            with _jobs_lock:
+                _jobs[job_id]["done"] = True
+                _jobs[job_id]["result"] = {"saved": 0}
+            return
+
+        # Score in parallel
+        job_dicts = [
+            {
+                "title":       l.title,
+                "company":     l.company,
+                "location":    l.location,
+                "description": l.description,
+                "job_url":     l.job_url,
+                "is_remote":   l.is_remote,
+                "date_posted": l.date_posted,
+                "source":      l.source,
+                "apply_method":l.apply_method,
+                "contact_email": l.contact_email,
+                "ats_url":     l.ats_url,
+                "company_url": l.company_url,
+            }
+            for l in new_listings
+        ]
+        candidate_profile_for_scoring = {
+            "role_title": role_title,
+            "skills": skills,
+            "summary": summary,
+            "industries": profile.get("industries", []),
+        }
+        scored = score_jobs_parallel(job_dicts, candidate_profile_for_scoring)
+        above_threshold = [j for j in scored if j.get("score", 0) >= min_score]
+
+        # Cap auto-generated cover letters to the top matches; the rest save
+        # without one and get a letter on demand via the "Generate" button.
+        MAX_LETTERS = 10
+        letter_targets = {id(j) for j in above_threshold[:MAX_LETTERS]}
+        emit("generating",
+             f"Writing cover letters for top {len(letter_targets)} of "
+             f"{len(above_threshold)} matches (score ≥ {min_score})...")
+
+        saved_count = 0
+        for job in scored:
+            score = job.get("score", 0)
+            cover_letter = ""
+            subject_line = f"Application for {job['title']} — {candidate_name or role_title}"
+
+            if id(job) in letter_targets:
+                try:
+                    cl_result = generate_cover_letter(
+                        job_title=job["title"],
+                        company=job["company"],
+                        location=job.get("location", ""),
+                        description=job.get("description", ""),
+                        candidate_profile=candidate_profile_for_scoring,
+                        candidate_name=candidate_name,
+                    )
+                    cover_letter = cl_result.get("cover_letter", "")
+                    subject_line = cl_result.get("subject_line", subject_line)
+                except Exception as e:
+                    log.warning("Cover letter failed for %s: %s", job["title"], e)
+
+            try:
+                save_job_application(
+                    user_id=user_id,
+                    job_title=job["title"],
+                    company_name=job["company"],
+                    job_url=job["job_url"],
+                    location=job.get("location", ""),
+                    is_remote=bool(job.get("is_remote", False)),
+                    date_posted=job.get("date_posted", ""),
+                    source=job.get("source", ""),
+                    job_description=job.get("description", ""),
+                    match_score=score,
+                    match_rationale=job.get("rationale", ""),
+                    key_matches=job.get("key_matches", []),
+                    gaps=job.get("gaps", []),
+                    cover_letter=cover_letter,
+                    subject_line=subject_line,
+                    apply_method=job.get("apply_method", "manual"),
+                    contact_email=job.get("contact_email"),
+                    ats_url=job.get("ats_url"),
+                    company_url=job.get("company_url"),
+                    candidate_name=candidate_name,
+                    candidate_role=role_title,
+                )
+                saved_count += 1
+            except Exception as e:
+                log.warning("Could not save job %s: %s", job["title"], e)
+
+        emit("done", f"Saved {saved_count} jobs to your review queue.")
+        with _jobs_lock:
+            _jobs[job_id]["done"] = True
+            _jobs[job_id]["result"] = {"saved": saved_count}
+
+    except Exception as e:
+        log.exception("Job search error for job_id=%s", job_id)
+        with _jobs_lock:
+            _jobs[job_id]["error"] = str(e)
+            _jobs[job_id]["done"] = True
+        emit("error", str(e))
+
+
+@app.get("/jobs", response_class=HTMLResponse)
+async def jobs_page(request: Request, job_id: str = None):
+    if (r := _require_auth(request)):
+        return r
+    return templates.TemplateResponse(
+        request=request, name="jobs.html",
+        context={"job_id": job_id, "error": None},
+    )
+
+
+@app.post("/jobs", response_class=HTMLResponse)
+async def jobs_search(
+    request: Request,
+    resume_file: UploadFile = File(None),
+    resume_text: str = Form(""),
+    keywords: str = Form(""),
+    location: str = Form("Remote"),
+    min_score: int = Form(60),
+    remote_only: bool = Form(False),
+    candidate_name: str = Form(""),
+):
+    if (r := _require_auth(request)):
+        return r
+
+    from tools.resume_parser import parse_resume
+
+    text = ""
+    if resume_file and resume_file.filename:
+        raw = await resume_file.read()
+        text = parse_resume(raw, resume_file.filename)
+    if not text and resume_text.strip():
+        text = resume_text.strip()
+    if not text:
+        return templates.TemplateResponse(
+            request=request, name="jobs.html",
+            context={"job_id": None, "error": "Please upload a PDF resume or paste your resume text."},
+        )
+
+    job_id = str(uuid.uuid4())
+    with _jobs_lock:
+        _jobs[job_id] = {"events": [], "done": False, "result": None, "error": None}
+
+    threading.Thread(
+        target=_run_job_search_thread,
+        args=(
+            job_id, text, keywords, location or "Remote",
+            min(max(min_score, 0), 100), bool(remote_only),
+            _current_user_id(request), candidate_name.strip(),
+        ),
+        daemon=True,
+    ).start()
+
+    return RedirectResponse(url=f"/jobs?job_id={job_id}", status_code=303)
+
+
+@app.get("/jobs/queue", response_class=HTMLResponse)
+async def jobs_queue(request: Request, status: str = ""):
+    if (r := _require_auth(request)):
+        return r
+    init_jobs_table()
+    filter_status = status if status in ("queued", "approved", "applied", "rejected") else None
+    jobs = list_job_applications(
+        user_id=_current_user_id(request),
+        status=filter_status,
+    )
+    return templates.TemplateResponse(
+        request=request, name="jobs_queue.html",
+        context={"jobs": jobs, "filter_status": filter_status or "all"},
+    )
+
+
+@app.get("/jobs/{job_app_id}", response_class=HTMLResponse)
+async def job_detail(request: Request, job_app_id: int):
+    if (r := _require_auth(request)):
+        return r
+    job = get_job_application(job_app_id)
+    if not job:
+        return HTMLResponse(content="Job not found.", status_code=404)
+    return templates.TemplateResponse(
+        request=request, name="job_detail.html",
+        context={"job": job},
+    )
+
+
+@app.post("/jobs/{job_app_id}/approve")
+async def job_approve(request: Request, job_app_id: int):
+    if (r := _require_auth(request)):
+        return r
+    job = get_job_application(job_app_id)
+    if not job:
+        return HTMLResponse("Job not found.", status_code=404)
+
+    if job.apply_method == "email" and job.contact_email:
+        from tools.email_sender import send_application_email
+        success = send_application_email(
+            to_email=job.contact_email,
+            subject=job.subject_line or f"Application for {job.job_title}",
+            body=job.cover_letter or "",
+            from_name=job.candidate_name or "",
+        )
+        update_job_status(job_app_id, "applied" if success else "approved")
+        return RedirectResponse(url=f"/jobs/{job_app_id}?applied={'1' if success else '0'}", status_code=303)
+    else:
+        # ATS / manual — mark approved, redirect to job URL in detail page
+        update_job_status(job_app_id, "approved")
+        return RedirectResponse(url=f"/jobs/{job_app_id}?ats=1", status_code=303)
+
+
+@app.post("/jobs/{job_app_id}/reject")
+async def job_reject(request: Request, job_app_id: int):
+    if (r := _require_auth(request)):
+        return r
+    update_job_status(job_app_id, "rejected")
+    return RedirectResponse(url="/jobs/queue", status_code=303)
+
+
+@app.post("/jobs/{job_app_id}/applied")
+async def job_mark_applied(request: Request, job_app_id: int):
+    if (r := _require_auth(request)):
+        return r
+    update_job_status(job_app_id, "applied")
+    return RedirectResponse(url="/jobs/queue", status_code=303)
+
+
+@app.post("/jobs/{job_app_id}/generate-letter")
+async def job_generate_letter(request: Request, job_app_id: int):
+    if (r := _require_auth(request)):
+        return r
+    job = get_job_application(job_app_id)
+    if not job:
+        return HTMLResponse("Job not found.", status_code=404)
+
+    from llm.cover_letter import generate_cover_letter
+    from storage.profiles import load_profile
+    profile = load_profile() or {}
+    try:
+        cl = generate_cover_letter(
+            job_title=job.job_title,
+            company=job.company_name,
+            location=job.location,
+            description=job.job_description,
+            candidate_profile=profile,
+            candidate_name=job.candidate_name or "",
+        )
+        update_cover_letter(job_app_id, cl.get("cover_letter", ""))
+    except Exception as e:
+        log.error("Cover letter generation failed: %s", e)
+    return RedirectResponse(url=f"/jobs/{job_app_id}", status_code=303)
+
+
+@app.post("/jobs/{job_app_id}/save-letter")
+async def job_save_letter(
+    request: Request,
+    job_app_id: int,
+    cover_letter: str = Form(...),
+):
+    if (r := _require_auth(request)):
+        return r
+    update_cover_letter(job_app_id, cover_letter)
+    return RedirectResponse(url=f"/jobs/{job_app_id}", status_code=303)
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Find Jobs — Outly</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f9fafb; padding: 2rem; color: #111827; }
+        .container { max-width: 680px; margin: 0 auto; }
+        nav { display: flex; gap: 1rem; margin-bottom: 1.5rem; align-items: center; }
+        nav a { color: #2563eb; text-decoration: none; font-weight: 500; }
+        nav a:hover { text-decoration: underline; }
+        h1 { margin: 0 0 0.25rem; font-size: 1.5rem; }
+        .subtitle { color: #6b7280; margin: 0 0 1.75rem; font-size: 0.9rem; }
+        .card { background: white; border-radius: 10px; padding: 1.75rem; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+        .section-label { font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: #374151; margin: 1.25rem 0 0.5rem; }
+        .section-label:first-child { margin-top: 0; }
+        label { display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.3rem; }
+        input[type="text"], input[type="number"], textarea, select {
+            width: 100%; padding: 0.55rem 0.75rem; border: 1px solid #d1d5db;
+            border-radius: 6px; font-size: 0.9rem; color: #111827;
+            background: white; transition: border-color 0.15s;
+        }
+        input:focus, textarea:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+        textarea { resize: vertical; min-height: 140px; font-family: inherit; }
+        .upload-area {
+            border: 2px dashed #d1d5db; border-radius: 8px; padding: 1.25rem;
+            text-align: center; cursor: pointer; transition: border-color 0.15s;
+            color: #6b7280; font-size: 0.875rem;
+        }
+        .upload-area:hover { border-color: #2563eb; color: #2563eb; }
+        .upload-area input { display: none; }
+        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; }
+        .hint { font-size: 0.75rem; color: #9ca3af; margin-top: 0.2rem; }
+        .checkbox-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+        .checkbox-row input { width: auto; }
+        .checkbox-row label { margin: 0; font-weight: 400; }
+        .score-display { font-weight: 700; color: #2563eb; }
+        .btn-submit {
+            display: block; width: 100%; margin-top: 1.5rem; padding: 0.75rem;
+            background: #2563eb; color: white; border: none; border-radius: 8px;
+            font-size: 1rem; font-weight: 600; cursor: pointer; text-align: center;
+            transition: background 0.15s;
+        }
+        .btn-submit:hover { background: #1d4ed8; }
+        .btn-submit:disabled { background: #93c5fd; cursor: not-allowed; }
+        .error { background: #fee2e2; border: 1px solid #fca5a5; border-radius: 6px; padding: 0.75rem 1rem; color: #991b1b; margin-bottom: 1rem; font-size: 0.875rem; }
+        .queue-link { margin-top: 1rem; text-align: center; }
+        .queue-link a { color: #2563eb; text-decoration: none; font-size: 0.875rem; }
+        .queue-link a:hover { text-decoration: underline; }
+        .divider { border: none; border-top: 1px solid #e5e7eb; margin: 1.5rem 0; }
+        /* SSE progress */
+        #progress-box { display: none; margin-top: 1.5rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem 1.25rem; }
+        .progress-step { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; font-size: 0.875rem; }
+        .progress-step .dot { width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; flex-shrink: 0; }
+        .progress-step.active .dot { background: #2563eb; animation: pulse 1s infinite; }
+        .progress-step.done-step .dot { background: #16a34a; }
+        .progress-step.error-step .dot { background: #dc2626; }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+        .step-detail { color: #6b7280; font-size: 0.8rem; margin-left: 1.25rem; }
+        .result-banner { display: none; margin-top: 1rem; padding: 0.75rem 1rem; border-radius: 6px; font-weight: 500; }
+        .result-banner.success { background: #dcfce7; color: #166534; }
+        .result-banner.error { background: #fee2e2; color: #991b1b; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <nav>
+        <a href="/">← Home</a>
+        <a href="/drafts">Drafts</a>
+        <a href="/jobs/queue">Job Queue</a>
+    </nav>
+
+    <h1>Find Matching Jobs</h1>
+    <p class="subtitle">Upload your resume — Outly will search LinkedIn &amp; Indeed, score matches, and write tailored cover letters for your review.</p>
+
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <div class="card">
+        <form id="job-form" method="POST" action="/jobs" enctype="multipart/form-data">
+
+            <p class="section-label">Your Resume</p>
+
+            <div class="upload-area" id="upload-area" onclick="document.getElementById('resume_file').click()">
+                <input type="file" name="resume_file" id="resume_file" accept=".pdf,.txt,.doc,.docx" onchange="fileChosen(this)">
+                <span id="upload-label">Click to upload PDF resume</span>
+            </div>
+
+            <p class="hint" style="text-align:center; margin-top:0.4rem;">— or paste your resume below —</p>
+
+            <textarea name="resume_text" placeholder="Paste your resume text here..." rows="5"></textarea>
+
+            <div class="row" style="margin-top:1rem;">
+                <div>
+                    <label for="candidate_name">Your Name</label>
+                    <input type="text" name="candidate_name" id="candidate_name" placeholder="Jane Doe">
+                </div>
+                <div>
+                    <label for="keywords">Job Keywords <span style="font-weight:400;color:#9ca3af;">(optional)</span></label>
+                    <input type="text" name="keywords" id="keywords" placeholder="e.g. Python backend engineer">
+                    <p class="hint">Leave blank to auto-detect from resume</p>
+                </div>
+            </div>
+
+            <div class="row" style="margin-top:1rem;">
+                <div>
+                    <label for="location">Location</label>
+                    <input type="text" name="location" id="location" value="Remote" placeholder="Remote, New York, etc.">
+                </div>
+                <div>
+                    <label for="min_score">Min Match Score: <span class="score-display" id="score-val">60</span></label>
+                    <input type="range" name="min_score" id="min_score" min="0" max="100" value="60"
+                        oninput="document.getElementById('score-val').textContent=this.value"
+                        style="width:100%; margin-top:0.4rem; accent-color:#2563eb;">
+                    <p class="hint">Jobs below this score are still saved but without a cover letter</p>
+                </div>
+            </div>
+
+            <div class="checkbox-row" style="margin-top:0.75rem;">
+                <input type="checkbox" name="remote_only" id="remote_only" value="true">
+                <label for="remote_only">Remote-only positions</label>
+            </div>
+
+            <button type="submit" class="btn-submit" id="submit-btn">Search Jobs</button>
+        </form>
+
+        <div id="progress-box">
+            <div id="progress-steps"></div>
+            <div class="result-banner" id="result-banner"></div>
+        </div>
+    </div>
+
+    <div class="queue-link">
+        <a href="/jobs/queue">View your job review queue →</a>
+    </div>
+</div>
+
+<script>
+function fileChosen(input) {
+    const label = document.getElementById('upload-label');
+    label.textContent = input.files.length ? input.files[0].name : 'Click to upload PDF resume';
+}
+
+{% if job_id %}
+const JOB_ID = "{{ job_id }}";
+window.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('job-form').style.display = 'none';
+    const box = document.getElementById('progress-box');
+    box.style.display = 'block';
+    streamProgress(JOB_ID);
+});
+{% endif %}
+
+function streamProgress(jobId) {
+    const stepsEl = document.getElementById('progress-steps');
+    const banner  = document.getElementById('result-banner');
+    const steps   = {};
+
+    function upsertStep(stepId, label, detail, state) {
+        if (!steps[stepId]) {
+            const div = document.createElement('div');
+            div.className = 'progress-step';
+            div.innerHTML = `<span class="dot"></span><span class="label">${label}</span>`;
+            stepsEl.appendChild(div);
+            const det = document.createElement('div');
+            det.className = 'step-detail';
+            stepsEl.appendChild(det);
+            steps[stepId] = { row: div, det: det };
+        }
+        const s = steps[stepId];
+        s.row.className = 'progress-step ' + (state === 'active' ? 'active' : state === 'done' ? 'done-step' : state === 'error' ? 'error-step' : '');
+        s.row.querySelector('.label').textContent = label;
+        s.det.textContent = detail || '';
+    }
+
+    const es = new EventSource(`/stream/${jobId}`);
+    es.onmessage = e => {
+        const data = JSON.parse(e.data);
+        if (data.step === '__result__') {
+            es.close();
+            const saved = data.result && data.result.saved;
+            banner.className = 'result-banner ' + (typeof saved === 'number' ? 'success' : 'error');
+            banner.textContent = typeof saved === 'number'
+                ? `Done! ${saved} jobs added to your review queue.`
+                : (data.error || 'Something went wrong.');
+            banner.style.display = 'block';
+            if (saved > 0) {
+                banner.innerHTML += ` <a href="/jobs/queue" style="color:#166534;font-weight:600;">Review now →</a>`;
+            }
+            return;
+        }
+        const state = data.step === 'error' ? 'error' : data.step === 'done' ? 'done' : 'active';
+        upsertStep(data.step, data.label, data.detail, state);
+        if (data.step === 'done') {
+            // mark previous steps as done
+            Object.values(steps).forEach(s => {
+                if (s.row.classList.contains('active')) s.row.className = 'progress-step done-step';
+            });
+        }
+    };
+    es.onerror = () => {
+        es.close();
+        banner.className = 'result-banner error';
+        banner.textContent = 'Connection lost. Refresh to check results.';
+        banner.style.display = 'block';
+    };
+}
+</script>
+</body>
+</html>

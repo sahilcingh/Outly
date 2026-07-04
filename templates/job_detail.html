@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ job.job_title }} — {{ job.company_name }} | Outly</title>
+    <meta name="job-ats" content="{{ request.query_params.get('ats', '0') }}">
+    <meta name="job-applied" content="{{ request.query_params.get('applied', '') }}">
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f9fafb; padding: 2rem; color: #111827; }
+        .container { max-width: 800px; margin: 0 auto; }
+        nav { display: flex; gap: 1rem; margin-bottom: 1.5rem; align-items: center; }
+        nav a { color: #2563eb; text-decoration: none; font-weight: 500; }
+        nav a:hover { text-decoration: underline; }
+        .header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 1.5rem; }
+        .header-text h1 { margin: 0 0 0.25rem; font-size: 1.4rem; }
+        .header-text .company { font-size: 1rem; color: #374151; font-weight: 500; }
+        .header-text .meta { font-size: 0.82rem; color: #6b7280; margin-top: 0.3rem; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+        .score-circle {
+            display: flex; align-items: center; justify-content: center;
+            width: 64px; height: 64px; border-radius: 50%; font-weight: 800;
+            font-size: 1.1rem; border: 3px solid; flex-shrink: 0;
+        }
+        .score-high   { background: #dcfce7; color: #166534; border-color: #86efac; }
+        .score-medium { background: #fef9c3; color: #854d0e; border-color: #fde68a; }
+        .score-low    { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+        .tag { padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; border: 1px solid; }
+        .tag-remote  { background: #ecfdf5; color: #166534; border-color: #bbf7d0; }
+        .tag-source  { background: #eff6ff; color: #1e40af; border-color: #bfdbfe; }
+        .tag-method  { background: #fef9c3; color: #854d0e; border-color: #fde68a; }
+        .status-badge { padding: 0.25rem 0.6rem; border-radius: 12px; font-size: 0.78rem; font-weight: 600; display: inline-block; }
+        .status-queued   { background: #eff6ff; color: #1e40af; }
+        .status-approved { background: #dcfce7; color: #166534; }
+        .status-applied  { background: #dbeafe; color: #1e40af; }
+        .status-rejected { background: #fee2e2; color: #991b1b; }
+        .card { background: white; border-radius: 10px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1rem; }
+        .section-title { font-weight: 600; font-size: 0.9rem; color: #374151; margin: 0 0 0.75rem; padding-bottom: 0.4rem; border-bottom: 1px solid #f3f4f6; }
+        .rationale { font-size: 0.875rem; color: #374151; line-height: 1.55; }
+        .alert { padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.875rem; font-weight: 500; margin-bottom: 1rem; }
+        .alert-success { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+        .alert-info    { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+        .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
+        .chip-match { padding: 0.2rem 0.55rem; background: #dcfce7; color: #166534; border-radius: 20px; font-size: 0.78rem; font-weight: 500; }
+        .chip-gap   { padding: 0.2rem 0.55rem; background: #fee2e2; color: #991b1b; border-radius: 20px; font-size: 0.78rem; font-weight: 500; }
+        .cover-letter-textarea {
+            width: 100%; min-height: 320px; padding: 0.75rem; border: 1px solid #d1d5db;
+            border-radius: 6px; font-family: inherit; font-size: 0.875rem; line-height: 1.65;
+            color: #111827; resize: vertical; transition: border-color 0.15s;
+        }
+        .cover-letter-textarea:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+        .subject-preview {
+            padding: 0.5rem 0.75rem; background: #f3f4f6; border-radius: 6px;
+            font-size: 0.875rem; color: #374151; margin-bottom: 0.75rem;
+        }
+        .subject-preview strong { color: #6b7280; font-weight: 500; font-size: 0.78rem; display: block; margin-bottom: 0.1rem; }
+        .actions-bar { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-top: 1rem; }
+        .btn { padding: 0.45rem 1rem; border: none; border-radius: 6px; cursor: pointer; font-size: 0.875rem; font-weight: 500; text-decoration: none; display: inline-block; line-height: 1.5; transition: opacity 0.15s; }
+        .btn:hover { opacity: 0.85; }
+        .btn-save    { background: #2563eb; color: white; }
+        .btn-approve { background: #16a34a; color: white; }
+        .btn-reject  { background: #dc2626; color: white; }
+        .btn-open    { background: #7c3aed; color: white; }
+        .btn-applied { background: #0891b2; color: white; }
+        .btn-back    { background: #f3f4f6; color: #374151; }
+        .contact-row { display: flex; gap: 0.5rem; align-items: center; font-size: 0.875rem; }
+        .contact-row a { color: #2563eb; }
+        .desc-toggle { font-size: 0.8rem; color: #2563eb; cursor: pointer; background: none; border: none; padding: 0; text-decoration: underline; }
+        #desc-text { font-size: 0.82rem; color: #374151; line-height: 1.55; white-space: pre-wrap; max-height: 200px; overflow: hidden; transition: max-height 0.3s; }
+        #desc-text.expanded { max-height: 2000px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <nav>
+        <a href="/jobs/queue">← Job Queue</a>
+        <a href="/jobs">Find More</a>
+    </nav>
+
+    {% if request.query_params.get('applied') == '1' %}
+    <div class="alert alert-success">✅ Application email sent successfully to {{ job.contact_email }}!</div>
+    {% elif request.query_params.get('applied') == '0' %}
+    <div class="alert alert-info">⚠️ Email send failed. Please send manually to {{ job.contact_email }} using the subject and cover letter below.</div>
+    {% elif request.query_params.get('ats') == '1' %}
+    <div class="alert alert-info">✅ Approved! Open the job link below, paste your cover letter, and click Apply. Then click "Mark Applied" when done.</div>
+    {% endif %}
+
+    <div class="header">
+        <div class="header-text">
+            <h1>{{ job.job_title }}</h1>
+            <div class="company">
+                {% if job.company_url %}
+                <a href="{{ job.company_url }}" target="_blank" rel="noopener" style="color:inherit;">{{ job.company_name }}</a>
+                {% else %}{{ job.company_name }}{% endif %}
+            </div>
+            <div class="meta">
+                {% if job.location %}<span>{{ job.location }}</span>{% endif %}
+                {% if job.is_remote %}<span class="tag tag-remote">Remote</span>{% endif %}
+                <span class="tag tag-source">{{ job.source }}</span>
+                <span class="tag tag-method">{{ job.apply_method.replace('ats_','') }}</span>
+                <span class="status-badge status-{{ job.status }}">{{ job.status }}</span>
+                {% if job.date_posted %}<span>Posted: {{ job.date_posted }}</span>{% endif %}
+            </div>
+        </div>
+        {% set s = job.match_score %}
+        <div class="score-circle {{ 'score-high' if s >= 70 else 'score-medium' if s >= 40 else 'score-low' }}">
+            {{ s }}%
+        </div>
+    </div>
+
+    <!-- Match analysis -->
+    <div class="card">
+        <p class="section-title">Match Analysis</p>
+        <p class="rationale">{{ job.match_rationale }}</p>
+        {% if job.key_matches %}
+        <p style="font-size:0.8rem;color:#6b7280;margin:0.75rem 0 0.25rem;font-weight:600;">Strengths</p>
+        <div class="chips">
+            {% for m in job.key_matches %}<span class="chip-match">{{ m }}</span>{% endfor %}
+        </div>
+        {% endif %}
+        {% if job.gaps %}
+        <p style="font-size:0.8rem;color:#6b7280;margin:0.75rem 0 0.25rem;font-weight:600;">Gaps</p>
+        <div class="chips">
+            {% for g in job.gaps %}<span class="chip-gap">{{ g }}</span>{% endfor %}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Apply info -->
+    <div class="card">
+        <p class="section-title">How to Apply</p>
+        {% if job.apply_method == 'email' and job.contact_email %}
+        <div class="contact-row">
+            <span>Send email to:</span>
+            <a href="mailto:{{ job.contact_email }}">{{ job.contact_email }}</a>
+        </div>
+        {% elif job.ats_url %}
+        <div class="contact-row">
+            <span>Apply via ATS:</span>
+            <a href="{{ job.ats_url }}" target="_blank" rel="noopener">{{ job.ats_url[:60] }}{% if job.ats_url|length > 60 %}…{% endif %}</a>
+        </div>
+        {% else %}
+        <div class="contact-row">
+            <span>Job listing:</span>
+            <a href="{{ job.job_url }}" target="_blank" rel="noopener">{{ job.job_url[:60] }}{% if job.job_url|length > 60 %}…{% endif %}</a>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Cover letter -->
+    <div class="card">
+        <p class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
+            Cover Letter
+            <form method="POST" action="/jobs/{{ job.id }}/generate-letter" style="display:inline;">
+                <button type="submit" style="font-size:0.78rem;padding:0.25rem 0.6rem;border:1px solid #d1d5db;border-radius:5px;background:white;cursor:pointer;color:#374151;">
+                    ↻ {% if not job.cover_letter %}Generate{% else %}Regenerate{% endif %}
+                </button>
+            </form>
+        </p>
+
+        {% if job.subject_line %}
+        <div class="subject-preview">
+            <strong>Email Subject Line</strong>
+            {{ job.subject_line }}
+        </div>
+        {% endif %}
+
+        <form method="POST" action="/jobs/{{ job.id }}/save-letter">
+            <textarea class="cover-letter-textarea" name="cover_letter">{{ job.cover_letter }}</textarea>
+            <div class="actions-bar">
+                <button type="submit" class="btn btn-save">Save Letter</button>
+                <a class="btn btn-back" href="/jobs/queue">Back to Queue</a>
+            </div>
+        </form>
+
+        <div class="actions-bar" style="margin-top:0.5rem;">
+            {% if job.status == 'queued' or job.status == 'telegram_pending' or job.status == 'awaiting_feedback' %}
+            <form method="POST" action="/jobs/{{ job.id }}/approve" style="display:inline">
+                <button class="btn btn-approve">
+                    {% if job.apply_method == 'email' and job.contact_email %}
+                        ✅ Approve & Send Email
+                    {% else %}
+                        ✅ Approve
+                    {% endif %}
+                </button>
+            </form>
+            <form method="POST" action="/jobs/{{ job.id }}/reject" style="display:inline">
+                <button class="btn btn-reject">✗ Reject</button>
+            </form>
+            {% elif job.status == 'approved' %}
+            <a class="btn btn-open" href="{{ job.ats_url or job.job_url }}" target="_blank" rel="noopener">🔗 Open Job Page</a>
+            <form method="POST" action="/jobs/{{ job.id }}/applied" style="display:inline">
+                <button class="btn btn-applied">✓ Mark Applied</button>
+            </form>
+            {% elif job.status == 'applied' %}
+            <span style="color:#166534;font-weight:600;">🎉 Applied!</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Job description -->
+    {% if job.job_description %}
+    <div class="card">
+        <p class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
+            Job Description
+            <button class="desc-toggle" onclick="toggleDesc()">Show more</button>
+        </p>
+        <div id="desc-text">{{ job.job_description }}</div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function toggleDesc() {
+    const el = document.getElementById('desc-text');
+    const btn = document.querySelector('.desc-toggle');
+    const expanded = el.classList.toggle('expanded');
+    btn.textContent = expanded ? 'Show less' : 'Show more';
+}
+</script>
+</body>
+</html>

@@ -12,6 +12,15 @@ psycopg2-binary>=2.9.9
 # Resume parsing
 pypdf>=4.0.0
 
+# Job search
+python-jobspy>=1.1.14
+markdownify>=0.11.0
+regex>=2024.0.0
+
+# Scheduler
+apscheduler>=3.10.0
+pytz>=2024.1
+
 # Web Application
 fastapi>=0.111.0
 starlette>=0.37.0

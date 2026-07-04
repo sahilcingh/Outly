@@ -1,20 +1,59 @@
 """
 Shared Groq API client for all LLM calls.
-Groq free tier: 14,400 req/day, 30 RPM — much more generous than Gemini free tier.
+Groq free tier: 14,400 req/day, 30 RPM.
+
+A process-wide throttle enforces a minimum interval between request *starts*
+so parallel callers (job scoring, cover letters, etc.) never blow past 30 RPM.
+This is the single choke point for all Groq traffic in the app.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 import time
 
 from config import get_groq_api_key, GROQ_DEFAULT_MODEL
 
 log = logging.getLogger(__name__)
 
-_MAX_ATTEMPTS = 4
-_BASE_DELAY = 15
-_MAX_DELAY = 90
+# ── Retry policy (our own loop; the SDK's internal retries are disabled below) ──
+_MAX_ATTEMPTS = 5
+_BASE_DELAY = 8
+_MAX_DELAY = 60
+
+# ── Global rate limiter ────────────────────────────────────────────────────────
+# 30 RPM = 1 request / 2s. Use 2.3s to leave headroom for clock skew + bursts.
+_MIN_INTERVAL = 2.3
+_rate_lock = threading.Lock()
+_last_call_ts = 0.0
+
+# ── Reused client (creating a Groq() per call is wasteful) ─────────────────────
+_client = None
+_client_lock = threading.Lock()
+
+
+def _get_client():
+    global _client
+    if _client is None:
+        with _client_lock:
+            if _client is None:
+                from groq import Groq
+                # max_retries=0: we own the retry loop below. The SDK's built-in
+                # retries were stacking on top of ours and multiplying backoff.
+                _client = Groq(api_key=get_groq_api_key(), max_retries=0)
+    return _client
+
+
+def _throttle() -> None:
+    """Block until at least _MIN_INTERVAL has elapsed since the last request start."""
+    global _last_call_ts
+    with _rate_lock:
+        now = time.monotonic()
+        wait = _MIN_INTERVAL - (now - _last_call_ts)
+        if wait > 0:
+            time.sleep(wait)
+        _last_call_ts = time.monotonic()
 
 
 def groq_json_call(
@@ -26,19 +65,19 @@ def groq_json_call(
 ) -> str | None:
     """
     Make a Groq API call expecting JSON output.
-    Retries on rate limit errors with exponential backoff.
-    Returns response text or None on failure.
+    Globally throttled to stay under 30 RPM; retries on rate-limit errors.
+    Returns the raw JSON string (callers parse it) or raises on hard failure.
     """
     try:
-        from groq import Groq
+        from groq import Groq  # noqa: F401  (import guard for a clear error msg)
     except ImportError:
         raise ImportError("Install groq: pip install groq")
 
-    api_key = get_groq_api_key()
-    client = Groq(api_key=api_key)
+    client = _get_client()
 
     last_exc: Exception | None = None
     for attempt in range(1, _MAX_ATTEMPTS + 1):
+        _throttle()
         try:
             response = client.chat.completions.create(
                 model=model,
@@ -59,7 +98,8 @@ def groq_json_call(
             last_exc = exc
             if attempt < _MAX_ATTEMPTS:
                 delay = min(_BASE_DELAY * (2 ** (attempt - 1)), _MAX_DELAY)
-                log.warning("%s rate limit (attempt %d/%d) — retrying in %ds", label, attempt, _MAX_ATTEMPTS, delay)
+                log.warning("%s rate limit (attempt %d/%d) — retrying in %ds",
+                            label, attempt, _MAX_ATTEMPTS, delay)
                 time.sleep(delay)
             else:
                 log.error("%s still rate limited after %d attempts.", label, _MAX_ATTEMPTS)
