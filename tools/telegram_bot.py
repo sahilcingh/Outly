@@ -146,6 +146,31 @@ def edit_job_message(message_id: int, job) -> None:
     })
 
 
+def send_document(file_bytes: bytes, filename: str, caption: str = "") -> int | None:
+    """Send a file (PDF, etc.) to the configured chat. Returns message_id or None."""
+    token = _token()
+    chat_id = _chat_id()
+    if not token or not chat_id:
+        log.warning("Telegram token/chat_id missing — cannot send document")
+        return None
+    url = _API.format(token=token, method="sendDocument")
+    try:
+        resp = requests.post(
+            url,
+            data={"chat_id": chat_id, "caption": caption[:1000]},
+            files={"document": (filename, file_bytes, "application/pdf")},
+            timeout=30,
+        )
+        result = resp.json()
+        if not result.get("ok"):
+            log.warning("sendDocument error: %s", result.get("description"))
+            return None
+        return result["result"]["message_id"]
+    except Exception as e:
+        log.error("sendDocument failed: %s", e)
+        return None
+
+
 def answer_callback(callback_query_id: str, text: str = "") -> None:
     _call("answerCallbackQuery", {
         "callback_query_id": callback_query_id,

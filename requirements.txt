@@ -21,6 +21,9 @@ regex>=2024.0.0
 apscheduler>=3.10.0
 pytz>=2024.1
 
+# PDF digest for Telegram
+fpdf2>=2.7.0
+
 # Web Application
 fastapi>=0.111.0
 starlette>=0.37.0

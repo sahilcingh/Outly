@@ -932,6 +932,8 @@ async def telegram_webhook(request: Request):
             _tg_help(chat_id)
         elif text == "/status":
             _tg_status(chat_id)
+        elif text == "/queue":
+            threading.Thread(target=_tg_send_queue_pdf, args=(chat_id,), daemon=True).start()
         elif text == "/help":
             _tg_help(chat_id)
         else:
@@ -1118,6 +1120,29 @@ def _tg_handle_resume(msg: dict, chat_id: int) -> None:
     )
 
 
+def _tg_send_queue_pdf(chat_id: int) -> None:
+    """Build and send a PDF of all current queue/pending jobs on demand."""
+    from tools.telegram_bot import send_message, send_document
+    from tools.job_pdf import build_jobs_pdf
+    from storage.jobs import list_job_applications
+
+    user_id = get_scheduler_user_id()
+    all_jobs = list_job_applications(user_id=user_id)
+    # Show actionable jobs: queued, pending review, awaiting feedback, approved
+    active = [j for j in all_jobs if j.status in
+              ("queued", "telegram_pending", "awaiting_feedback", "approved")]
+    if not active:
+        send_message("📭 No active jobs in your queue right now.")
+        return
+    try:
+        pdf_bytes = build_jobs_pdf(active, title="Job Review Queue")
+        send_document(pdf_bytes, filename="outly_jobs.pdf",
+                      caption=f"Your {len(active)} active jobs with full details.")
+    except Exception as e:
+        log.error("Failed to send queue PDF: %s", e)
+        send_message(f"⚠️ Could not build the PDF: {e}")
+
+
 def _tg_status(chat_id: int) -> None:
     from tools.telegram_bot import send_message
     from storage.jobs import list_job_applications
@@ -1211,6 +1236,7 @@ def _tg_help(chat_id: int) -> None:
     send_message(
         "🤖 *Outly Job Bot — Commands*\n\n"
         "📄 *Send PDF* — Update your resume (triggers next search)\n"
+        "/queue — Get a PDF of all your active jobs with full details\n"
         "/status — Show application counts by status\n"
         f"`/applied_ID` — Mark job #ID as applied (after ATS submit)\n"
         "/help — Show this message\n\n"

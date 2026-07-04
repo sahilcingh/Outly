@@ -173,7 +173,7 @@ def _dispatch_queued_jobs(user_id: int, limit: int) -> None:
     from storage.jobs import (
         get_queued_jobs, set_telegram_pending, update_cover_letter, get_job_application
     )
-    from tools.telegram_bot import send_job_for_approval
+    from tools.telegram_bot import send_job_for_approval, send_document
     from llm.cover_letter import generate_cover_letter
     from storage.profiles import load_profile
 
@@ -183,26 +183,33 @@ def _dispatch_queued_jobs(user_id: int, limit: int) -> None:
 
     profile = load_profile() or {}
 
+    # First pass: ensure every job has a cover letter (fill lazily if missing)
+    finalized = []
     for job in queued:
-        try:
-            # Lazy cover letter: fill in if missing (letter cap was hit at save time)
-            if not (job.cover_letter or "").strip() and (job.job_description or "").strip():
-                try:
-                    cl = generate_cover_letter(
-                        job_title=job.job_title,
-                        company=job.company_name,
-                        location=job.location,
-                        description=job.job_description,
-                        candidate_profile=profile,
-                        candidate_name=job.candidate_name or "",
-                    )
-                    letter = cl.get("cover_letter", "")
-                    if letter:
-                        update_cover_letter(job.id, letter)
-                        job = get_job_application(job.id)  # reload with the new letter
-                except Exception as e:
-                    log.warning("Lazy cover letter failed for #%d: %s", job.id, e)
+        if not (job.cover_letter or "").strip() and (job.job_description or "").strip():
+            try:
+                cl = generate_cover_letter(
+                    job_title=job.job_title,
+                    company=job.company_name,
+                    location=job.location,
+                    description=job.job_description,
+                    candidate_profile=profile,
+                    candidate_name=job.candidate_name or "",
+                )
+                letter = cl.get("cover_letter", "")
+                if letter:
+                    update_cover_letter(job.id, letter)
+                    job = get_job_application(job.id)  # reload with the new letter
+            except Exception as e:
+                log.warning("Lazy cover letter failed for #%d: %s", job.id, e)
+        finalized.append(job)
 
+    # Send the full PDF digest first (all data, same as the Job Queue page)
+    _send_jobs_pdf(finalized)
+
+    # Then send each job as an interactive Approve/Reject message
+    for job in finalized:
+        try:
             msg_id = send_job_for_approval(job)
             if msg_id:
                 set_telegram_pending(job.id, msg_id)
@@ -210,3 +217,21 @@ def _dispatch_queued_jobs(user_id: int, limit: int) -> None:
                 log.warning("Could not send job #%d to Telegram", job.id)
         except Exception as e:
             log.error("dispatch_queued_jobs error for job #%d: %s", job.id, e)
+
+
+def _send_jobs_pdf(jobs: list) -> None:
+    """Build a PDF digest of the given jobs and send it to Telegram."""
+    if not jobs:
+        return
+    try:
+        from tools.job_pdf import build_jobs_pdf
+        from tools.telegram_bot import send_document
+        pdf_bytes = build_jobs_pdf(jobs, title="Job Review Queue")
+        send_document(
+            pdf_bytes,
+            filename="outly_jobs.pdf",
+            caption=f"Your {len(jobs)} matched jobs. Full details attached; "
+                    f"approve/reject each below.",
+        )
+    except Exception as e:
+        log.error("Failed to build/send jobs PDF: %s", e)
