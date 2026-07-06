@@ -1097,6 +1097,45 @@ async def telegram_set_webhook(request: Request, url: str = None):
     return JSONResponse({"ok": ok, "webhook_url": webhook_url})
 
 
+# ---------------------------------------------------------------------------
+# External cron trigger — reliable scheduling that survives free-tier sleep
+# ---------------------------------------------------------------------------
+
+@app.api_route("/tasks/run-search", methods=["GET", "POST"])
+async def tasks_run_search(request: Request, token: str = ""):
+    """
+    Run the scheduled job search on demand. Intended for an external cron
+    (cron-job.org, UptimeRobot, GitHub Actions) so the search fires reliably
+    even when Render's free tier has spun the in-process scheduler to sleep —
+    the incoming request itself wakes the service.
+
+    Auth: pass ?token=<CRON_SECRET>  (or X-Cron-Secret header).
+    Runs in a background thread and returns immediately.
+    """
+    from config import get_cron_secret
+
+    secret = get_cron_secret()
+    if not secret:
+        return JSONResponse(
+            {"ok": False, "error": "CRON_SECRET not set on the server. Set it in Render env vars."},
+            status_code=503,
+        )
+
+    provided = token or request.headers.get("X-Cron-Secret", "")
+    if provided != secret:
+        return JSONResponse({"ok": False, "error": "Invalid or missing token."}, status_code=401)
+
+    def _run():
+        try:
+            from scheduler.job_runner import run_scheduled_search
+            run_scheduled_search()
+        except Exception:
+            log.exception("tasks/run-search failed")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return JSONResponse({"ok": True, "status": "search started — watch Telegram for the PDF"})
+
+
 def _tg_help(chat_id: int) -> None:
     from tools.telegram_bot import send_message
     send_message(
