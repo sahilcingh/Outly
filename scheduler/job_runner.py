@@ -55,19 +55,25 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     )
     from storage.profiles import load_profile
     from tools.telegram_bot import send_message
-    from config import get_scheduler_user_id
+    from config import get_scheduler_user_id, get_candidate_level, is_seniority_strict
+    from tools.seniority import level_from_years, filter_by_level, search_query_for_level
 
     user_id = get_scheduler_user_id()
     role_title = profile.get("role_title", "Software Engineer")
     skills = profile.get("skills", [])
     candidate_name = profile.get("candidate_name", "")
 
+    # Resolve seniority: env override wins, else derive from resume years
+    level = get_candidate_level() or level_from_years(profile.get("experience_years"))
+    strict = is_seniority_strict()
+    profile["level"] = level  # so the scorer sees it
+
     init_jobs_table()
 
-    # ── Search ──────────────────────────────────────────────────────────────
+    # ── Search (biased to the candidate's level) ──────────────────────────────
     try:
         listings = search_jobs(
-            query=role_title,
+            query=search_query_for_level(role_title, level),
             location="Remote",
             results_per_site=20,
             hours_old=168,
@@ -77,12 +83,18 @@ def _search_and_queue(profile: dict, limit: int) -> None:
         send_message(f"⚠️ Job search failed: {e}")
         return
 
+    # Drop roles above the candidate's seniority ceiling
+    listings, dropped = filter_by_level(listings, level, strict)
+    if dropped:
+        log.info("Seniority filter (%s, strict=%s) dropped %d over-level roles",
+                 level, strict, dropped)
+
     existing_urls = get_existing_job_urls(user_id)
     new_listings = [l for l in listings if l.job_url not in existing_urls]
-    log.info("Found %d listings, %d new", len(listings), len(new_listings))
+    log.info("Found %d %s-level listings, %d new", len(listings), level, len(new_listings))
 
     if not new_listings:
-        send_message("ℹ️ No new jobs found this round. Queue already up to date.")
+        send_message(f"ℹ️ No new {level}-level jobs found this round. Queue up to date.")
         _dispatch_queued_jobs(user_id, limit)
         return
 

@@ -125,3 +125,17 @@ def get_scheduler_user_id() -> int:
 def get_cron_secret() -> str | None:
     """Shared secret required to trigger /tasks/run-search from an external cron."""
     return os.getenv("CRON_SECRET", "").strip() or None
+
+
+def get_candidate_level() -> str | None:
+    """
+    Explicit candidate seniority override (entry|junior|mid|senior).
+    If unset, the level is derived from the resume's experience_years.
+    """
+    val = os.getenv("CANDIDATE_LEVEL", "").strip().lower()
+    return val if val in ("entry", "junior", "mid", "senior") else None
+
+
+def is_seniority_strict() -> bool:
+    """Whether to drop over-level roles entirely (default True)."""
+    return os.getenv("SENIORITY_STRICT", "true").strip().lower() != "false"

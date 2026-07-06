@@ -18,6 +18,7 @@ Respond ONLY with valid JSON — no markdown, no extra text."""
 _PROMPT = """
 CANDIDATE PROFILE:
 Role title: {role_title}
+Experience: {experience_years} years ({level}-level)
 Skills: {skills}
 Industries: {industries}
 Summary: {summary}
@@ -29,16 +30,22 @@ Location: {location}
 Description (first 1200 chars):
 {description}
 
-Score this match from 0 to 100:
-- 80-100: Strong match — role title aligns well, majority of required skills present
-- 60-79: Good match — role fits, some skill gaps but candidate can grow into them
+Score this match from 0 to 100 based on BOTH skill fit AND seniority fit:
+- 80-100: Strong match — level-appropriate AND majority of required skills present
+- 60-79: Good match — right level, some skill gaps the candidate can grow into
 - 40-59: Partial match — adjacent role or partial skill overlap
-- 0-39: Poor match — different domain or major requirement gaps
+- 0-39: Poor match — wrong domain, major skill gaps, OR wrong seniority
+
+SENIORITY RULE (critical): This candidate is {level}-level with {experience_years} years.
+If the job clearly requires more seniority than the candidate has — e.g. Senior,
+Staff, Lead, Principal, Architect, Manager/Director titles, or the description
+demands significantly more years of experience than the candidate has — CAP the
+score at 30, no matter how well the skills overlap. An over-level role is a poor fit.
 
 Return exactly this JSON:
 {{
   "score": <integer 0-100>,
-  "rationale": "<2-3 sentences explaining the score>",
+  "rationale": "<2-3 sentences explaining the score, mention seniority fit>",
   "key_matches": ["<skill or requirement that aligns>", ...],
   "gaps": ["<important requirement candidate lacks>", ...]
 }}
@@ -58,14 +65,16 @@ def score_job(
     or a safe default on failure.
     """
     prompt = _PROMPT.format(
-        role_title   = candidate_profile.get("role_title", "Software Engineer"),
-        skills       = ", ".join(candidate_profile.get("skills", [])[:20]),
-        industries   = ", ".join(candidate_profile.get("industries", [])[:5]),
-        summary      = (candidate_profile.get("summary", "") or "")[:400],
-        job_title    = job_title,
-        company      = company,
-        location     = location,
-        description  = (description or "")[:1200],
+        role_title       = candidate_profile.get("role_title", "Software Engineer"),
+        experience_years = candidate_profile.get("experience_years", candidate_profile.get("years_experience", "0-1")),
+        level            = candidate_profile.get("level", "entry"),
+        skills           = ", ".join(candidate_profile.get("skills", [])[:20]),
+        industries       = ", ".join(candidate_profile.get("industries", [])[:5]),
+        summary          = (candidate_profile.get("summary", "") or "")[:400],
+        job_title        = job_title,
+        company          = company,
+        location         = location,
+        description      = (description or "")[:1200],
     )
     try:
         import json as _json

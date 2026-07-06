@@ -1209,9 +1209,17 @@ def _run_job_search_thread(
         summary = profile.get("summary", "")
         emit("profile_ready", f"Role: {role_title} | Skills: {', '.join(skills[:5])}")
 
-        # Search jobs
-        emit("searching", f"Searching for '{keywords or role_title}' in {location}...")
-        query = keywords.strip() if keywords.strip() else role_title
+        # Resolve seniority (env override or derived from resume years)
+        from config import get_candidate_level, is_seniority_strict
+        from tools.seniority import level_from_years, filter_by_level, search_query_for_level
+        level = get_candidate_level() or level_from_years(profile.get("experience_years"))
+        strict = is_seniority_strict()
+        profile["level"] = level
+
+        # Search jobs (bias query to level unless the user typed their own keywords)
+        base_query = keywords.strip() if keywords.strip() else role_title
+        query = base_query if keywords.strip() else search_query_for_level(base_query, level)
+        emit("searching", f"Searching for '{query}' in {location}...")
         listings = search_jobs(
             query=query,
             location=location or "Remote",
@@ -1227,10 +1235,13 @@ def _run_job_search_thread(
                 _jobs[job_id]["result"] = {"saved": 0}
             return
 
-        # Filter already-saved (avoid duplicates) — one batched query
+        # Drop over-level roles, then filter already-saved (one batched query)
+        listings, dropped = filter_by_level(listings, level, strict)
+        if dropped:
+            emit("scoring", f"Filtered {dropped} roles above your {level} level...")
         existing_urls = get_existing_job_urls(user_id)
         new_listings = [l for l in listings if l.job_url not in existing_urls]
-        emit("scoring", f"Scoring {len(new_listings)} new jobs...")
+        emit("scoring", f"Scoring {len(new_listings)} {level}-level jobs...")
 
         if not new_listings:
             emit("done", "All found jobs are already in your queue.")
@@ -1262,6 +1273,8 @@ def _run_job_search_thread(
             "skills": skills,
             "summary": summary,
             "industries": profile.get("industries", []),
+            "level": level,
+            "experience_years": profile.get("experience_years", "0-1"),
         }
         scored = score_jobs_parallel(job_dicts, candidate_profile_for_scoring)
         above_threshold = [j for j in scored if j.get("score", 0) >= min_score]
