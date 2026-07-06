@@ -51,7 +51,7 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     from llm.job_matcher import score_jobs_parallel
     from llm.cover_letter import generate_cover_letter
     from storage.jobs import (
-        init_jobs_table, save_job_application, job_already_saved, get_queued_jobs
+        init_jobs_table, save_job_application, get_existing_job_urls, get_queued_jobs
     )
     from storage.profiles import load_profile
     from tools.telegram_bot import send_message
@@ -77,7 +77,8 @@ def _search_and_queue(profile: dict, limit: int) -> None:
         send_message(f"⚠️ Job search failed: {e}")
         return
 
-    new_listings = [l for l in listings if not job_already_saved(user_id, l.job_url)]
+    existing_urls = get_existing_job_urls(user_id)
+    new_listings = [l for l in listings if l.job_url not in existing_urls]
     log.info("Found %d listings, %d new", len(listings), len(new_listings))
 
     if not new_listings:

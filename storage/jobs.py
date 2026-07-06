@@ -361,6 +361,32 @@ def job_already_saved(user_id: int | None, job_url: str) -> bool:
         return cur.fetchone() is not None
 
 
+def get_existing_job_urls(user_id: int | None = None) -> set[str]:
+    """
+    Return the set of job_urls already saved for this user in ONE query.
+    Batch alternative to calling job_already_saved() per listing — avoids
+    dozens of sequential round trips to the DB.
+    """
+    ph = "%s" if _USE_POSTGRES else "?"
+    if user_id is not None:
+        sql = f"SELECT job_url FROM job_applications WHERE user_id = {ph}"
+        params = (user_id,)
+    else:
+        sql = "SELECT job_url FROM job_applications"
+        params = ()
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+    urls = set()
+    for r in rows:
+        try:
+            urls.add(r[0] if not isinstance(r, dict) else r["job_url"])
+        except Exception:
+            pass
+    return urls
+
+
 # ---------------------------------------------------------------------------
 # Row converter
 # ---------------------------------------------------------------------------

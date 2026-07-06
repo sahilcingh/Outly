@@ -32,7 +32,7 @@ from storage.jobs import (
     get_job_application,
     update_job_status,
     update_cover_letter,
-    job_already_saved,
+    get_existing_job_urls,
 )
 
 log = logging.getLogger(__name__)
@@ -1227,8 +1227,9 @@ def _run_job_search_thread(
                 _jobs[job_id]["result"] = {"saved": 0}
             return
 
-        # Filter already-saved (avoid duplicates)
-        new_listings = [l for l in listings if not job_already_saved(user_id, l.job_url)]
+        # Filter already-saved (avoid duplicates) — one batched query
+        existing_urls = get_existing_job_urls(user_id)
+        new_listings = [l for l in listings if l.job_url not in existing_urls]
         emit("scoring", f"Scoring {len(new_listings)} new jobs...")
 
         if not new_listings:

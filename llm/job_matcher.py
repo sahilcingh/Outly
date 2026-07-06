@@ -87,7 +87,7 @@ def score_jobs_parallel(
     jobs: list[dict],
     candidate_profile: dict,
     max_workers: int = 4,
-    max_to_score: int = 30,
+    max_to_score: int = 20,
 ) -> list[dict]:
     """
     Score job dicts against the candidate profile.
