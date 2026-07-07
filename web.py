@@ -45,6 +45,13 @@ _scheduler = None
 
 def _start_scheduler() -> None:
     global _scheduler
+    # If an external cron is configured (CRON_SECRET set), it drives the schedule
+    # via /tasks/run-search — don't also run the in-process scheduler, or every
+    # slot would fire twice.
+    from config import get_cron_secret
+    if get_cron_secret():
+        log.info("CRON_SECRET set — external cron drives scheduling; internal scheduler disabled")
+        return
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
         from apscheduler.triggers.cron import CronTrigger
@@ -93,6 +100,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="B2B Prospecting Agent", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=get_secret_key(), max_age=86400 * 7)
+
+
+@app.get("/health")
+async def health():
+    """Lightweight, no-auth endpoint for an external keep-alive pinger
+    (UptimeRobot etc.) so the free instance never spins down."""
+    return JSONResponse({"status": "ok"})
 
 
 @app.exception_handler(Exception)
