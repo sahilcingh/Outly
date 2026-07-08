@@ -47,7 +47,7 @@ def run_scheduled_search() -> None:
 
 
 def _search_and_queue(profile: dict, limit: int) -> None:
-    from tools.job_search import search_jobs
+    from tools.job_search import search_jobs_locations
     from llm.job_matcher import score_jobs_parallel
     from llm.cover_letter import generate_cover_letter
     from storage.jobs import (
@@ -55,8 +55,12 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     )
     from storage.profiles import load_profile
     from tools.telegram_bot import send_message
-    from config import get_scheduler_user_id, get_candidate_level, is_seniority_strict
+    from config import (
+        get_scheduler_user_id, get_candidate_level, is_seniority_strict,
+        get_job_locations, get_job_hours_old,
+    )
     from tools.seniority import level_from_years, filter_by_level, search_query_for_level
+    from tools.location import is_india_job, location_rank
 
     user_id = get_scheduler_user_id()
     role_title = profile.get("role_title", "Software Engineer")
@@ -68,20 +72,29 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     strict = is_seniority_strict()
     profile["level"] = level  # so the scorer sees it
 
+    locations = get_job_locations()      # Bengaluru first, then India
+    hours_old = get_job_hours_old()      # recency window (default 24h)
+
     init_jobs_table()
 
-    # ── Search (biased to the candidate's level) ──────────────────────────────
+    # ── Search: India locations (Bengaluru first), recent postings only ───────
     try:
-        listings = search_jobs(
+        listings = search_jobs_locations(
             query=search_query_for_level(role_title, level),
-            location="Remote",
-            results_per_site=20,
-            hours_old=168,
+            locations=locations,
+            results_per_site=15,
+            hours_old=hours_old,
         )
     except Exception as e:
         log.error("Job search failed: %s", e)
         send_message(f"⚠️ Job search failed: {e}")
         return
+
+    # Keep only India jobs (drop US/abroad)
+    before = len(listings)
+    listings = [l for l in listings if is_india_job(l.location, l.is_remote)]
+    if before - len(listings):
+        log.info("Location filter dropped %d non-India roles", before - len(listings))
 
     # Drop roles above the candidate's seniority ceiling
     listings, dropped = filter_by_level(listings, level, strict)
@@ -91,10 +104,13 @@ def _search_and_queue(profile: dict, limit: int) -> None:
 
     existing_urls = get_existing_job_urls(user_id)
     new_listings = [l for l in listings if l.job_url not in existing_urls]
-    log.info("Found %d %s-level listings, %d new", len(listings), level, len(new_listings))
+    log.info("Found %d India %s-level listings, %d new", len(listings), level, len(new_listings))
 
     if not new_listings:
-        send_message(f"ℹ️ No new {level}-level jobs found this round. Queue up to date.")
+        send_message(
+            f"ℹ️ No new {level}-level jobs in India (posted in the last {hours_old}h) "
+            f"this round. Queue up to date."
+        )
         _dispatch_queued_jobs(user_id, limit)
         return
 
@@ -117,6 +133,15 @@ def _search_and_queue(profile: dict, limit: int) -> None:
         for l in new_listings
     ]
     scored = score_jobs_parallel(job_dicts, profile)
+
+    # Prefer Bengaluru: small score nudge so local roles rank above equal matches
+    for j in scored:
+        rank = location_rank(j.get("location", ""))
+        if rank == 0:      # Bengaluru
+            j["score"] = min(100, j.get("score", 0) + 8)
+        elif rank == 1:    # elsewhere in India
+            j["score"] = min(100, j.get("score", 0) + 3)
+    scored.sort(key=lambda j: j.get("score", 0), reverse=True)
 
     # Cover letters are generated lazily at dispatch time (see _dispatch_queued_jobs),
     # so a job dispatched in a later run still gets a fresh letter. Here we only

@@ -139,3 +139,25 @@ def get_candidate_level() -> str | None:
 def is_seniority_strict() -> bool:
     """Whether to drop over-level roles entirely (default True)."""
     return os.getenv("SENIORITY_STRICT", "true").strip().lower() != "false"
+
+
+def get_job_locations() -> list[str]:
+    """
+    Locations to search, in priority order. Semicolon-separated JOB_LOCATIONS
+    env override (semicolons, since a location like 'Bengaluru, India' contains
+    a comma); defaults to Bengaluru first, then the rest of India.
+    """
+    raw = os.getenv("JOB_LOCATIONS", "").strip()
+    if raw:
+        locs = [x.strip() for x in raw.split(";") if x.strip()]
+        if locs:
+            return locs
+    return ["Bengaluru, India", "India"]
+
+
+def get_job_hours_old() -> int:
+    """Only return jobs posted within this many hours (default 24 = today)."""
+    try:
+        return max(1, int(os.getenv("JOB_HOURS_OLD", "24")))
+    except ValueError:
+        return 24

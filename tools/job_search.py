@@ -171,3 +171,40 @@ def search_jobs(
 
     log.info("Found %d job listings for query '%s' (cap %d)", len(listings), query, max_results)
     return listings
+
+
+def search_jobs_locations(
+    query: str,
+    locations: list[str],
+    results_per_site: int = 15,
+    hours_old: int = 24,
+    remote_only: bool = False,
+    max_results: int = 40,
+) -> list[JobListing]:
+    """
+    Run the search across several locations in priority order and merge the
+    results, de-duplicated by job_url, keeping the first (highest-priority)
+    occurrence. Earlier locations in the list are searched first.
+    """
+    seen: set[str] = set()
+    merged: list[JobListing] = []
+    for loc in locations:
+        if len(merged) >= max_results:
+            break
+        batch = search_jobs(
+            query=query,
+            location=loc,
+            results_per_site=results_per_site,
+            hours_old=hours_old,
+            remote_only=remote_only,
+            max_results=max_results,
+        )
+        for l in batch:
+            if l.job_url in seen:
+                continue
+            seen.add(l.job_url)
+            merged.append(l)
+            if len(merged) >= max_results:
+                break
+    log.info("Merged %d listings across locations %s", len(merged), locations)
+    return merged
