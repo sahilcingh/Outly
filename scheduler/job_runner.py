@@ -57,7 +57,7 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     from tools.telegram_bot import send_message
     from config import (
         get_scheduler_user_id, get_candidate_level, is_seniority_strict,
-        get_job_locations, get_job_hours_old,
+        get_job_locations, get_job_hours_old, get_job_hours_fresh,
     )
     from tools.seniority import level_from_years, filter_by_level, search_query_for_level
     from tools.location import is_india_job, location_rank
@@ -72,43 +72,44 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     strict = is_seniority_strict()
     profile["level"] = level  # so the scorer sees it
 
-    locations = get_job_locations()      # Bengaluru first, then India
-    hours_old = get_job_hours_old()      # recency window (default 24h)
+    locations = get_job_locations()        # Bengaluru first, then India
+    fresh_hours = get_job_hours_fresh()    # tight window, tried first (~couple hrs)
+    max_hours = get_job_hours_old()        # widen to this if fresh is empty (cap)
+    query = search_query_for_level(role_title, level)
 
     init_jobs_table()
+    existing_urls = get_existing_job_urls(user_id)
 
-    # ── Search: India locations (Bengaluru first), recent postings only ───────
+    def _fetch(hours: int) -> list:
+        """Search + India/seniority/dedup filter for a given recency window."""
+        batch = search_jobs_locations(query=query, locations=locations,
+                                      results_per_site=15, hours_old=hours)
+        # India only (remote allowed); drop US/abroad
+        batch = [l for l in batch if is_india_job(l.location, l.is_remote)]
+        # At/below the candidate's seniority ceiling
+        batch, _dropped = filter_by_level(batch, level, strict)
+        # Not already saved
+        return [l for l in batch if l.job_url not in existing_urls]
+
+    # ── Two-tier recency: try the last few hours, widen to 24h only if empty ──
     try:
-        listings = search_jobs_locations(
-            query=search_query_for_level(role_title, level),
-            locations=locations,
-            results_per_site=15,
-            hours_old=hours_old,
-        )
+        new_listings = _fetch(fresh_hours)
+        used_hours = fresh_hours
+        if not new_listings and max_hours > fresh_hours:
+            log.info("Nothing in last %dh — widening to %dh", fresh_hours, max_hours)
+            new_listings = _fetch(max_hours)
+            used_hours = max_hours
     except Exception as e:
         log.error("Job search failed: %s", e)
         send_message(f"⚠️ Job search failed: {e}")
         return
 
-    # Keep only India jobs (drop US/abroad)
-    before = len(listings)
-    listings = [l for l in listings if is_india_job(l.location, l.is_remote)]
-    if before - len(listings):
-        log.info("Location filter dropped %d non-India roles", before - len(listings))
-
-    # Drop roles above the candidate's seniority ceiling
-    listings, dropped = filter_by_level(listings, level, strict)
-    if dropped:
-        log.info("Seniority filter (%s, strict=%s) dropped %d over-level roles",
-                 level, strict, dropped)
-
-    existing_urls = get_existing_job_urls(user_id)
-    new_listings = [l for l in listings if l.job_url not in existing_urls]
-    log.info("Found %d India %s-level listings, %d new", len(listings), level, len(new_listings))
+    log.info("Found %d new India %s-level listings (last %dh)",
+             len(new_listings), level, used_hours)
 
     if not new_listings:
         send_message(
-            f"ℹ️ No new {level}-level jobs in India (posted in the last {hours_old}h) "
+            f"ℹ️ No new {level}-level jobs in India posted in the last {max_hours}h "
             f"this round. Queue up to date."
         )
         _dispatch_queued_jobs(user_id, limit)

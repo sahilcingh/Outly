@@ -156,8 +156,19 @@ def get_job_locations() -> list[str]:
 
 
 def get_job_hours_old() -> int:
-    """Only return jobs posted within this many hours (default 24 = today)."""
+    """Hard maximum recency window in hours — never widen past this (default 24)."""
     try:
         return max(1, int(os.getenv("JOB_HOURS_OLD", "24")))
     except ValueError:
         return 24
+
+
+def get_job_hours_fresh() -> int:
+    """
+    Preferred (tight) recency window in hours — a 'couple of hours'. Searched
+    first; if it yields nothing, the run widens to get_job_hours_old().
+    """
+    try:
+        return max(1, int(os.getenv("JOB_HOURS_FRESH", "3")))
+    except ValueError:
+        return 3
