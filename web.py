@@ -45,12 +45,14 @@ _scheduler = None
 
 def _start_scheduler() -> None:
     global _scheduler
-    # If an external cron is configured (CRON_SECRET set), it drives the schedule
-    # via /tasks/run-search — don't also run the in-process scheduler, or every
-    # slot would fire twice.
-    from config import get_cron_secret
-    if get_cron_secret():
-        log.info("CRON_SECRET set — external cron drives scheduling; internal scheduler disabled")
+    # In-process scheduler is the primary trigger — it fires from within the
+    # running process, so it can't hit a cold-start 503 the way an external HTTP
+    # cron can. It relies on the service staying awake (UptimeRobot keep-alive).
+    # Set DISABLE_INTERNAL_SCHEDULER=true to turn it off (e.g. if you insist on
+    # driving everything from an external cron instead).
+    import os
+    if os.getenv("DISABLE_INTERNAL_SCHEDULER", "false").strip().lower() == "true":
+        log.info("DISABLE_INTERNAL_SCHEDULER=true — internal scheduler off")
         return
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
@@ -60,15 +62,18 @@ def _start_scheduler() -> None:
 
         IST = pytz.timezone("Asia/Kolkata")
         _scheduler = BackgroundScheduler(timezone=IST)
+        # Generous misfire grace + coalesce: if the process was briefly busy or
+        # just restarted near 9:30, still run the job (once) rather than skip it.
+        job_kwargs = dict(misfire_grace_time=3600, coalesce=True, max_instances=1)
         _scheduler.add_job(
             run_scheduled_search,
             CronTrigger(day_of_week="mon-fri", hour=9, minute=30, timezone=IST),
-            id="morning_search",
+            id="morning_search", **job_kwargs,
         )
         _scheduler.add_job(
             run_scheduled_search,
             CronTrigger(day_of_week="mon-fri", hour=14, minute=30, timezone=IST),
-            id="afternoon_search",
+            id="afternoon_search", **job_kwargs,
         )
         _scheduler.start()
         log.info("APScheduler started (09:30 + 14:30 IST, weekdays)")
