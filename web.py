@@ -107,10 +107,11 @@ app = FastAPI(title="B2B Prospecting Agent", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=get_secret_key(), max_age=86400 * 7)
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
     """Lightweight, no-auth endpoint for an external keep-alive pinger
-    (UptimeRobot etc.) so the free instance never spins down."""
+    (UptimeRobot etc.) so the free instance never spins down.
+    Accepts HEAD too — UptimeRobot pings with HEAD by default."""
     return JSONResponse({"status": "ok"})
 
 
