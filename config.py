@@ -172,3 +172,15 @@ def get_job_hours_fresh() -> int:
         return max(1, int(os.getenv("JOB_HOURS_FRESH", "3")))
     except ValueError:
         return 3
+
+
+def get_extra_job_keywords() -> list[str]:
+    """
+    Extra job-type keywords to search alongside the main role query (for entry/
+    junior candidates). Semicolon-separated JOB_EXTRA_KEYWORDS env override;
+    defaults to internships and apprenticeships. Empty string disables them.
+    """
+    raw = os.getenv("JOB_EXTRA_KEYWORDS")
+    if raw is not None:
+        return [x.strip() for x in raw.split(";") if x.strip()]
+    return ["internship", "apprenticeship"]

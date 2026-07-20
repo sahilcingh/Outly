@@ -10,18 +10,32 @@ from __future__ import annotations
 import datetime
 import logging
 import threading
+import time
 
 log = logging.getLogger(__name__)
+
+# De-dupe overlapping/duplicate triggers (e.g. in-process scheduler AND an
+# external cron both firing the same 9:30 slot). Only one run may start within
+# this window — the rest are skipped, so you never get two PDFs for one slot.
+_run_lock = threading.Lock()
+_last_run_monotonic = 0.0
+_MIN_GAP_SECONDS = 20 * 60  # 20 minutes
 
 
 def run_scheduled_search() -> None:
     """
-    Main scheduler entry point. Called by APScheduler.
-    - Loads saved candidate profile
-    - Searches LinkedIn + Indeed for matching jobs
-    - Scores, generates cover letters, saves to DB
-    - Sends top N queued jobs to Telegram for approval
+    Main scheduler entry point. Called by APScheduler (and the /tasks/run-search
+    endpoint). Guarded so duplicate triggers for the same slot run only once.
     """
+    global _last_run_monotonic
+    with _run_lock:
+        now = time.monotonic()
+        if now - _last_run_monotonic < _MIN_GAP_SECONDS:
+            log.info("Skipping duplicate run — last run was %.0fs ago (< %ds guard)",
+                     now - _last_run_monotonic, _MIN_GAP_SECONDS)
+            return
+        _last_run_monotonic = now
+
     is_monday = datetime.datetime.now().weekday() == 0
     limit = 20 if is_monday else 10
 
@@ -47,7 +61,7 @@ def run_scheduled_search() -> None:
 
 
 def _search_and_queue(profile: dict, limit: int) -> None:
-    from tools.job_search import search_jobs_locations
+    from tools.job_search import search_jobs
     from llm.job_matcher import score_jobs_parallel
     from llm.cover_letter import generate_cover_letter
     from storage.jobs import (
@@ -57,7 +71,7 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     from tools.telegram_bot import send_message
     from config import (
         get_scheduler_user_id, get_candidate_level, is_seniority_strict,
-        get_job_locations, get_job_hours_old, get_job_hours_fresh,
+        get_job_locations, get_job_hours_old, get_job_hours_fresh, get_extra_job_keywords,
     )
     from tools.seniority import level_from_years, filter_by_level, search_query_for_level
     from tools.location import is_india_job, location_rank
@@ -75,18 +89,38 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     locations = get_job_locations()        # Bengaluru first, then India
     fresh_hours = get_job_hours_fresh()    # tight window, tried first (~couple hrs)
     max_hours = get_job_hours_old()        # widen to this if fresh is empty (cap)
-    query = search_query_for_level(role_title, level)
+    base_query = search_query_for_level(role_title, level)
+
+    # (query, location) pairs to scrape, in priority order. For entry/junior we
+    # also search internships and apprenticeships (broad India location only, to
+    # bound scrape time).
+    pairs = [(base_query, loc) for loc in locations]
+    if level in ("entry", "junior"):
+        broad_loc = locations[-1] if locations else "India"
+        for kw in get_extra_job_keywords():
+            pairs.append((f"{role_title} {kw}", broad_loc))
 
     init_jobs_table()
     existing_urls = get_existing_job_urls(user_id)
 
     def _fetch(hours: int) -> list:
-        """Search + India/seniority/dedup filter for a given recency window."""
-        batch = search_jobs_locations(query=query, locations=locations,
-                                      results_per_site=15, hours_old=hours)
+        """Search all (query, location) pairs for a recency window, merge + filter."""
+        by_url: dict = {}
+        for q, loc in pairs:
+            try:
+                batch = search_jobs(query=q, location=loc, results_per_site=12,
+                                    hours_old=hours, max_results=40)
+            except Exception as e:
+                log.warning("search failed for %r @ %s: %s", q, loc, e)
+                continue
+            for l in batch:
+                by_url.setdefault(l.job_url, l)
+            if len(by_url) >= 60:
+                break
+        batch = list(by_url.values())
         # India only (remote allowed); drop US/abroad
         batch = [l for l in batch if is_india_job(l.location, l.is_remote)]
-        # At/below the candidate's seniority ceiling
+        # At/below the candidate's seniority ceiling (keeps internships/apprenticeships)
         batch, _dropped = filter_by_level(batch, level, strict)
         # Not already saved
         return [l for l in batch if l.job_url not in existing_urls]
