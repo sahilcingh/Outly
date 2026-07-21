@@ -184,3 +184,15 @@ def get_extra_job_keywords() -> list[str]:
     if raw is not None:
         return [x.strip() for x in raw.split(";") if x.strip()]
     return ["internship", "apprenticeship"]
+
+
+def get_min_match_score() -> int:
+    """
+    Minimum LLM match score (0-100) for a job to enter the queue. Enforces
+    strict résumé alignment — off-profile roles (incl. unrelated internships)
+    score below this and are dropped. MIN_MATCH_SCORE env override (default 55).
+    """
+    try:
+        return max(0, min(100, int(os.getenv("MIN_MATCH_SCORE", "55"))))
+    except ValueError:
+        return 55

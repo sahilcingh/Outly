@@ -178,11 +178,29 @@ def _search_and_queue(profile: dict, limit: int) -> None:
             j["score"] = min(100, j.get("score", 0) + 3)
     scored.sort(key=lambda j: j.get("score", 0), reverse=True)
 
+    # Strict resume alignment: drop anything below the match threshold. Aligned
+    # roles (full-time, internship, or apprenticeship) score high; off-domain
+    # ones score low and are excluded here — so only résumé-matching jobs queue.
+    from config import get_min_match_score
+    min_score = get_min_match_score()
+    before_gate = len(scored)
+    scored = [j for j in scored if j.get("score", 0) >= min_score]
+    if before_gate - len(scored):
+        log.info("Relevance gate (score >= %d) dropped %d off-profile jobs",
+                 min_score, before_gate - len(scored))
+
+    if not scored:
+        send_message(
+            f"ℹ️ Found new {level}-level jobs in India, but none matched your "
+            f"résumé strongly enough (score ≥ {min_score}) this round."
+        )
+        _dispatch_queued_jobs(user_id, limit)
+        return
+
     # Cover letters are generated lazily at dispatch time (see _dispatch_queued_jobs),
     # so a job dispatched in a later run still gets a fresh letter. Here we only
     # pre-generate for the top `limit` that will be dispatched this same run.
-    eligible = [j for j in scored if j.get("score", 0) >= 50]
-    letter_targets = {id(j) for j in eligible[:limit]}
+    letter_targets = {id(j) for j in scored[:limit]}
 
     saved = 0
     for job in scored:
