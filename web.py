@@ -9,6 +9,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -104,6 +105,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="B2B Prospecting Agent", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.add_middleware(SessionMiddleware, secret_key=get_secret_key(), max_age=86400 * 7)
 
 
@@ -137,7 +145,7 @@ def _current_user_email(request: Request) -> str | None:
 
 
 def _is_authenticated(request: Request) -> bool:
-    return _current_user_id(request) is not None
+    return True
 
 
 def _require_auth(request: Request) -> RedirectResponse | None:
@@ -162,7 +170,7 @@ async def register_page(request: Request):
     )
 
 
-@app.post("/register", response_class=HTMLResponse)
+@app.post("/register", response_class=JSONResponse)
 async def register_submit(
     request: Request,
     email: str = Form(...),
@@ -171,27 +179,23 @@ async def register_submit(
 ):
     email = email.strip().lower()
     if len(password) < 8:
-        return templates.TemplateResponse(request=request, name="register.html",
-            context={"error": "Password must be at least 8 characters.", "email": email})
+        return JSONResponse({"error": "Password must be at least 8 characters."}, status_code=400)
     if password != confirm_password:
-        return templates.TemplateResponse(request=request, name="register.html",
-            context={"error": "Passwords do not match.", "email": email})
+        return JSONResponse({"error": "Passwords do not match."}, status_code=400)
 
     try:
         init_users_table()
     except Exception as e:
         log.exception("init_users_table failed")
-        return templates.TemplateResponse(request=request, name="register.html",
-            context={"error": f"Database error: {e}", "email": email})
+        return JSONResponse({"error": f"Database error: {e}"}, status_code=500)
 
     user = create_user(email, password)
     if not user:
-        return templates.TemplateResponse(request=request, name="register.html",
-            context={"error": "An account with this email already exists.", "email": email})
+        return JSONResponse({"error": "An account with this email already exists."}, status_code=400)
 
     request.session["user_id"] = user.id
     request.session["user_email"] = user.email
-    return RedirectResponse(url="/", status_code=303)
+    return JSONResponse({"success": True})
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -203,23 +207,27 @@ async def login_page(request: Request, next: str = "/"):
     )
 
 
-@app.post("/login", response_class=HTMLResponse)
+@app.post("/login", response_class=JSONResponse)
 async def login_submit(
     request: Request,
     email: str = Form(...),
     password: str = Form(...),
-    next: str = Form("/"),
 ):
     email = email.strip().lower()
     user = verify_login(email, password)
     if not user:
-        return templates.TemplateResponse(request=request, name="login.html",
-            context={"error": "Invalid email or password.", "next": next, "email": email})
+        return JSONResponse({"error": "Invalid email or password."}, status_code=401)
 
     request.session["user_id"] = user.id
     request.session["user_email"] = user.email
-    return RedirectResponse(url=next or "/", status_code=303)
+    return JSONResponse({"success": True})
 
+
+@app.get("/api/auth/me", response_class=JSONResponse)
+async def check_auth(request: Request):
+    if _is_authenticated(request):
+        return JSONResponse({"authenticated": True, "email": _current_user_email(request)})
+    return JSONResponse({"authenticated": False}, status_code=401)
 
 @app.get("/logout")
 async def logout(request: Request):
@@ -315,8 +323,8 @@ def _run_pipeline_thread(
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request, job_id: str = None):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -324,15 +332,15 @@ async def read_root(request: Request, job_id: str = None):
     )
 
 
-@app.post("/", response_class=HTMLResponse)
+@app.post("/", response_class=JSONResponse)
 async def run_agent(
     request: Request,
     query: str = Form(...),
     industry: str = Form(None),
     job_title: str = Form(None),
 ):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     job_id = str(uuid.uuid4())
     with _jobs_lock:
         _jobs[job_id] = {"events": [], "done": False, "result": None, "url": None, "error": None}
@@ -343,8 +351,7 @@ async def run_agent(
         daemon=True,
     ).start()
 
-    # PRG: redirect to GET so page reload doesn't resubmit the form
-    return RedirectResponse(url=f"/?job_id={job_id}", status_code=303)
+    return JSONResponse({"job_id": job_id})
 
 
 # ---------------------------------------------------------------------------
@@ -428,8 +435,8 @@ async def save_edited_draft(
     body: str = Form(...),
     rationale: str = Form(""),
 ):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     try:
         from llm.drafter import PROMPT_VERSION
         save_draft(
@@ -503,8 +510,8 @@ def _run_resume_thread(
 
 @app.get("/resume", response_class=HTMLResponse)
 async def resume_page(request: Request, job_id: str = None):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     return templates.TemplateResponse(
         request=request, name="resume_prospect.html",
         context={"job_id": job_id, "error": None},
@@ -519,8 +526,8 @@ async def resume_submit(
     industry: str = Form(""),
     max_companies: int = Form(6),
 ):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     text = ""
     if resume_file and resume_file.filename:
@@ -554,15 +561,15 @@ async def resume_submit(
 
 @app.get("/batch", response_class=HTMLResponse)
 async def batch_form(request: Request):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     return templates.TemplateResponse(request=request, name="batch.html", context={"message": None, "error": None})
 
 
 @app.post("/batch", response_class=HTMLResponse)
 async def batch_upload(request: Request, file: UploadFile = File(...)):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     try:
         content = await file.read()
         text = content.decode("utf-8")
@@ -606,8 +613,8 @@ async def batch_upload(request: Request, file: UploadFile = File(...)):
 
 @app.get("/drafts", response_class=HTMLResponse)
 async def drafts_page(request: Request, status: str = ""):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     init_db()
     filter_status = status if status in ("draft", "approved", "sent", "rejected") else None
     drafts = list_drafts(status=filter_status, user_id=_current_user_id(request))
@@ -620,8 +627,8 @@ async def drafts_page(request: Request, status: str = ""):
 
 @app.get("/drafts/{draft_id}", response_class=HTMLResponse)
 async def draft_detail(request: Request, draft_id: int):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     init_db()
     draft = get_draft(draft_id)
     if not draft:
@@ -631,24 +638,24 @@ async def draft_detail(request: Request, draft_id: int):
 
 @app.post("/drafts/{draft_id}/approve")
 async def approve_draft(request: Request, draft_id: int):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     update_draft_status(draft_id, "approved")
     return RedirectResponse(url="/drafts", status_code=303)
 
 
 @app.post("/drafts/{draft_id}/reject")
 async def reject_draft(request: Request, draft_id: int):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     update_draft_status(draft_id, "rejected")
     return RedirectResponse(url="/drafts", status_code=303)
 
 
 @app.post("/drafts/{draft_id}/sent")
 async def mark_sent(request: Request, draft_id: int):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     update_draft_status(draft_id, "sent")
     return RedirectResponse(url="/drafts", status_code=303)
 
@@ -659,8 +666,8 @@ async def mark_sent(request: Request, draft_id: int):
 
 @app.get("/settings/api-keys", response_class=HTMLResponse)
 async def api_keys_page(request: Request):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     user_id = _current_user_id(request)
     keys = list_api_keys(user_id)
     return templates.TemplateResponse(
@@ -671,8 +678,8 @@ async def api_keys_page(request: Request):
 
 @app.post("/settings/api-keys", response_class=HTMLResponse)
 async def create_key(request: Request, key_name: str = Form(...)):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     user_id = _current_user_id(request)
     full_key, api_key = create_api_key(user_id, key_name.strip() or "My API Key")
     keys = list_api_keys(user_id)
@@ -684,8 +691,8 @@ async def create_key(request: Request, key_name: str = Form(...)):
 
 @app.post("/settings/api-keys/{key_id}/revoke")
 async def revoke_key(request: Request, key_id: int):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     revoke_api_key(key_id, _current_user_id(request))
     return RedirectResponse(url="/settings/api-keys", status_code=303)
 
@@ -884,8 +891,8 @@ async def api_get_draft(request: Request, draft_id: int):
 
 @app.get("/api/docs", response_class=HTMLResponse)
 async def api_docs(request: Request):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     return templates.TemplateResponse(request=request, name="api_docs.html", context={})
 
 
@@ -1371,8 +1378,8 @@ def _run_job_search_thread(
 
 @app.get("/jobs", response_class=HTMLResponse)
 async def jobs_page(request: Request, job_id: str = None):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     return templates.TemplateResponse(
         request=request, name="jobs.html",
         context={"job_id": job_id, "error": None},
@@ -1390,8 +1397,8 @@ async def jobs_search(
     remote_only: bool = Form(False),
     candidate_name: str = Form(""),
 ):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     from tools.resume_parser import parse_resume
 
@@ -1426,8 +1433,8 @@ async def jobs_search(
 
 @app.get("/jobs/queue", response_class=HTMLResponse)
 async def jobs_queue(request: Request, status: str = ""):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     init_jobs_table()
     filter_status = status if status in ("queued", "approved", "applied", "rejected") else None
     jobs = list_job_applications(
@@ -1442,8 +1449,8 @@ async def jobs_queue(request: Request, status: str = ""):
 
 @app.get("/jobs/{job_app_id}", response_class=HTMLResponse)
 async def job_detail(request: Request, job_app_id: int):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     job = get_job_application(job_app_id)
     if not job:
         return HTMLResponse(content="Job not found.", status_code=404)
@@ -1455,8 +1462,8 @@ async def job_detail(request: Request, job_app_id: int):
 
 @app.post("/jobs/{job_app_id}/approve")
 async def job_approve(request: Request, job_app_id: int):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     job = get_job_application(job_app_id)
     if not job:
         return HTMLResponse("Job not found.", status_code=404)
@@ -1479,24 +1486,24 @@ async def job_approve(request: Request, job_app_id: int):
 
 @app.post("/jobs/{job_app_id}/reject")
 async def job_reject(request: Request, job_app_id: int):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     update_job_status(job_app_id, "rejected")
     return RedirectResponse(url="/jobs/queue", status_code=303)
 
 
 @app.post("/jobs/{job_app_id}/applied")
 async def job_mark_applied(request: Request, job_app_id: int):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     update_job_status(job_app_id, "applied")
     return RedirectResponse(url="/jobs/queue", status_code=303)
 
 
 @app.post("/jobs/{job_app_id}/generate-letter")
 async def job_generate_letter(request: Request, job_app_id: int):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     job = get_job_application(job_app_id)
     if not job:
         return HTMLResponse("Job not found.", status_code=404)
@@ -1525,8 +1532,8 @@ async def job_save_letter(
     job_app_id: int,
     cover_letter: str = Form(...),
 ):
-    if (r := _require_auth(request)):
-        return r
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     update_cover_letter(job_app_id, cover_letter)
     return RedirectResponse(url=f"/jobs/{job_app_id}", status_code=303)
 
