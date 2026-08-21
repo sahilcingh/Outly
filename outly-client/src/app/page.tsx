@@ -30,7 +30,7 @@ export default function Home() {
       const formData = new URLSearchParams();
       formData.append("query", query);
 
-      const res = await fetch("http://127.0.0.1:8000/", {
+      const res = await fetch("http://127.0.0.1:8001/", {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -57,7 +57,7 @@ export default function Home() {
       eventSourceRef.current.close();
     }
 
-    const sse = new EventSource(`http://127.0.0.1:8000/stream/${jobId}`);
+    const sse = new EventSource(`http://127.0.0.1:8001/stream/${jobId}`);
     eventSourceRef.current = sse;
 
     sse.onmessage = (e) => {

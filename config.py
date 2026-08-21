@@ -52,9 +52,13 @@ def get_database_url() -> str | None:
     return os.getenv("DATABASE_URL", "").strip() or None
 
 
-# Groq model — llama-3.3-70b-versatile: 14,400 req/day free, very fast
-GEMINI_DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")  # kept for fallback
-GROQ_DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+# Groq model — llama-3.1-70b-versatile: 14,400 req/day free, very fast
+# Optional: can override in .env
+GROQ_DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
+
+
+# Gemini model — gemini-2.0-flash
+GEMINI_DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 
 def get_secret_key() -> str:

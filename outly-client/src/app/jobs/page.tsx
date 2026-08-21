@@ -26,7 +26,7 @@ export default function JobsPage() {
       formData.append("min_score", "60");
       formData.append("remote_only", location.toLowerCase() === "remote" ? "true" : "false");
 
-      const res = await fetch("http://127.0.0.1:8000/jobs", {
+      const res = await fetch("http://127.0.0.1:8001/jobs", {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
