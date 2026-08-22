@@ -24,7 +24,7 @@ export default function DraftsPage() {
   const fetchDrafts = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`http://127.0.0.1:8000/drafts?status=${filter === "all" ? "" : filter}`);
+      const res = await fetch(`/backend/api/drafts?status=${filter === "all" ? "" : filter}`);
       if (res.ok) {
         const data = await res.json();
         setDrafts(data.drafts || []);
@@ -37,7 +37,7 @@ export default function DraftsPage() {
 
   const updateDraftStatus = async (id: number, status: string) => {
     try {
-      await fetch(`http://127.0.0.1:8000/drafts/${id}/${status}`, {
+      await fetch(`/backend/drafts/${id}/${status}`, {
         method: "POST",
       });
       fetchDrafts(); // Refresh

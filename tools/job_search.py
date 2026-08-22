@@ -43,6 +43,9 @@ def _detect_apply(job_url: str, emails: list[str]) -> tuple[str, str | None]:
         ("smartrecruiters",    "ats_smartrecruiters"),
         ("jobvite.com",        "ats_jobvite"),
         ("icims.com",          "ats_icims"),
+        ("myworkdayjobs.com",  "ats_workday"),
+        ("successfactors.com", "ats_successfactors"),
+        ("taleo.net",          "ats_taleo"),
     ]:
         if fragment in u:
             return method, job_url
@@ -147,14 +150,21 @@ def search_jobs(
         if not title or not company or not job_url:
             continue
 
+        # job_url is the board's own listing page (LinkedIn/Indeed); job_url_direct,
+        # when jobspy can resolve it, is the employer's real ATS application page
+        # (e.g. a company's Workday portal) — prefer it so users land one click
+        # closer to actually applying instead of bouncing through the job board.
+        job_url_direct = _safe_str(row.get("job_url_direct"))
+        apply_url = job_url_direct or job_url
+
         emails      = _safe_emails(row.get("emails"))
-        method, target = _detect_apply(job_url, emails)
+        method, target = _detect_apply(apply_url, emails)
 
         listing = JobListing(
             title        = title,
             company      = company,
             location     = _safe_str(row.get("location")) or location,
-            job_url      = job_url,
+            job_url      = apply_url,
             description  = _safe_str(row.get("description")),
             is_remote    = _safe_bool(row.get("is_remote")),
             date_posted  = _safe_str(row.get("date_posted")),

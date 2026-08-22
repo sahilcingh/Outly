@@ -52,9 +52,10 @@ def get_database_url() -> str | None:
     return os.getenv("DATABASE_URL", "").strip() or None
 
 
-# Groq model — llama-3.3-70b-versatile: 14,400 req/day free, very fast
+# Groq deprecated llama-3.3-70b-versatile (now 404s) — openai/gpt-oss-120b is the
+# current flagship model on Groq's free tier with equivalent JSON-mode support.
 GEMINI_DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")  # kept for fallback
-GROQ_DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 
 def get_secret_key() -> str:

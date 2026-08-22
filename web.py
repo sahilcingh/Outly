@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import dataclasses
 import io
 import json
 import logging
@@ -145,7 +146,7 @@ def _current_user_email(request: Request) -> str | None:
 
 
 def _is_authenticated(request: Request) -> bool:
-    return True
+    return _current_user_id(request) is not None
 
 
 def _require_auth(request: Request) -> RedirectResponse | None:
@@ -610,6 +611,17 @@ async def batch_upload(request: Request, file: UploadFile = File(...)):
 # ---------------------------------------------------------------------------
 # Drafts review UI
 # ---------------------------------------------------------------------------
+
+@app.get("/api/drafts")
+async def api_list_drafts(request: Request, status: str = ""):
+    """JSON drafts feed for the decoupled (Next.js) frontend."""
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    init_db()
+    filter_status = status if status in ("draft", "approved", "sent", "rejected") else None
+    drafts = list_drafts(status=filter_status, user_id=_current_user_id(request))
+    return JSONResponse({"drafts": [dataclasses.asdict(d) for d in drafts]})
+
 
 @app.get("/drafts", response_class=HTMLResponse)
 async def drafts_page(request: Request, status: str = ""):
@@ -1429,6 +1441,17 @@ async def jobs_search(
     ).start()
 
     return RedirectResponse(url=f"/jobs?job_id={job_id}", status_code=303)
+
+
+@app.get("/api/jobs/queue")
+async def api_jobs_queue(request: Request, status: str = ""):
+    """JSON job-queue feed for the decoupled (Next.js) frontend."""
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    init_jobs_table()
+    filter_status = status if status in ("queued", "approved", "applied", "rejected") else None
+    jobs = list_job_applications(user_id=_current_user_id(request), status=filter_status)
+    return JSONResponse({"jobs": [dataclasses.asdict(j) for j in jobs]})
 
 
 @app.get("/jobs/queue", response_class=HTMLResponse)

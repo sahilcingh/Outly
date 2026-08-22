@@ -1,6 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
+type JobApplication = {
+  id: number;
+  job_title: string;
+  company_name: string;
+  job_url: string;
+  location: string;
+  match_score: number;
+  status: string;
+  created_at: string;
+};
 
 export default function JobsPage() {
   const [resumeText, setResumeText] = useState("");
@@ -9,6 +20,25 @@ export default function JobsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [jobs, setJobs] = useState<JobApplication[]>([]);
+  const [queueLoading, setQueueLoading] = useState(true);
+
+  const fetchQueue = async () => {
+    try {
+      const res = await fetch("/backend/api/jobs/queue");
+      if (res.ok) {
+        const data = await res.json();
+        setJobs(data.jobs || []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch job queue", err);
+    }
+    setQueueLoading(false);
+  };
+
+  useEffect(() => {
+    fetchQueue();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,7 +56,7 @@ export default function JobsPage() {
       formData.append("min_score", "60");
       formData.append("remote_only", location.toLowerCase() === "remote" ? "true" : "false");
 
-      const res = await fetch("http://127.0.0.1:8000/jobs", {
+      const res = await fetch("/backend/jobs", {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -37,8 +67,9 @@ export default function JobsPage() {
       if (!res.ok) {
         throw new Error("Failed to start job search.");
       }
-      
+
       setSuccess(true);
+      fetchQueue();
     } catch (err: any) {
       setError(err.message || "An error occurred");
     } finally {
@@ -119,15 +150,43 @@ export default function JobsPage() {
         <div className="flex-1 w-full">
           <div className="card-light h-full flex flex-col gap-6" style={{ minHeight: '400px' }}>
             <h2 className="text-h3 border-b border-[var(--border-color)] pb-4">Job Queue</h2>
-            
-            <div className="flex flex-col items-center justify-center text-center opacity-50 h-full" style={{ minHeight: '200px' }}>
-               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="mb-4">
-                 <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
-                 <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
-               </svg>
-               <h3 className="text-h3 mb-2">No Active Jobs</h3>
-               <p className="text-muted max-w-[250px]">Start a search to find jobs tailored to your resume.</p>
-            </div>
+
+            {queueLoading ? (
+              <div className="flex justify-center" style={{ minHeight: '200px', alignItems: 'center' }}>
+                <div className="pulse" style={{ width: '20px', height: '20px', borderRadius: '50%', backgroundColor: 'var(--accent-blue)' }}></div>
+              </div>
+            ) : jobs.length === 0 ? (
+              <div className="flex flex-col items-center justify-center text-center opacity-50 h-full" style={{ minHeight: '200px' }}>
+                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="mb-4">
+                   <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+                   <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+                 </svg>
+                 <h3 className="text-h3 mb-2">No Active Jobs</h3>
+                 <p className="text-muted max-w-[250px]">Start a search to find jobs tailored to your resume.</p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {jobs.map(job => (
+                  <a
+                    key={job.id}
+                    href={job.job_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex justify-between items-start p-3 rounded-md hover:underline"
+                    style={{ border: '1px solid var(--border-color)', textDecoration: 'none' }}
+                  >
+                    <div>
+                      <div className="text-sm font-medium">{job.job_title}</div>
+                      <div className="text-xs text-muted">{job.company_name} · {job.location}</div>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="badge badge-warning">{job.match_score}% match</span>
+                      <span className="text-xs text-muted" style={{ textTransform: 'capitalize' }}>{job.status}</span>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
