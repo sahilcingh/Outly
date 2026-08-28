@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { API_BASE_URL } from "../config";
 
 type Draft = {
   id: number;
@@ -24,7 +25,10 @@ export default function DraftsPage() {
   const fetchDrafts = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`http://127.0.0.1:8001/drafts?status=${filter === "all" ? "" : filter}`);
+      const params = filter === "all" ? "" : `?status=${filter}`;
+      const res = await fetch(`${API_BASE_URL}/api/v1/drafts${params}`, {
+        credentials: "include",
+      });
       if (res.ok) {
         const data = await res.json();
         setDrafts(data.drafts || []);

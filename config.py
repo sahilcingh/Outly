@@ -52,9 +52,10 @@ def get_database_url() -> str | None:
     return os.getenv("DATABASE_URL", "").strip() or None
 
 
-# Groq model — llama-3.1-70b-versatile: 14,400 req/day free, very fast
-# Optional: can override in .env
-GROQ_DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
+# Groq model — use a model available on your Groq account.
+# Run: curl https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY"
+# to list available models. Note: llama-3.1-70b-versatile was decommissioned.
+GROQ_DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 
 # Gemini model — gemini-2.0-flash

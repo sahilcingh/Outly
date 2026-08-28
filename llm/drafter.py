@@ -35,8 +35,7 @@ def _drafter_system_instruction(ctx: TargetContext) -> str:
     # Build hiring signal context
     hiring_str = ""
     if ctx.hiring_signals:
-        top = ", ".join(ctx.hiring_signals[:4])
-        hiring_str = f"\nACTIVE JOB OPENINGS AT THIS COMPANY: {top}"
+        top = ", ".join(j["title"] for j in ctx.hiring_signals[:4])
 
     # Build news signal context
     news_str = ""

@@ -702,7 +702,8 @@ async def revoke_key(request: Request, key_id: int):
 # ---------------------------------------------------------------------------
 
 def _api_auth(request: Request) -> dict | None:
-    """Validate Bearer token from Authorization header. Returns user row or None."""
+    """Validate Bearer token from Authorization header. Returns user row or None.
+    Falls back to session auth so the Next.js frontend can use /api/v1/* endpoints."""
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         key = auth[7:].strip()
@@ -711,6 +712,10 @@ def _api_auth(request: Request) -> dict | None:
     key = request.headers.get("X-API-Key", "").strip()
     if key:
         return get_user_by_api_key(key)
+    # Fallback: accept session-based auth (browser / Next.js frontend)
+    if _is_authenticated(request):
+        user_id = _current_user_id(request) or 1
+        return {"user_id": user_id, "email": _current_user_email(request) or "local"}
     return None
 
 
