@@ -1454,6 +1454,18 @@ async def api_jobs_queue(request: Request, status: str = ""):
     })
 
 
+@app.get("/api/v1/jobs/{job_app_id}")
+async def api_get_job(request: Request, job_app_id: int):
+    """Single job JSON — same auth/ownership pattern as /api/v1/drafts/{id}."""
+    user = _api_auth(request)
+    if not user:
+        return _api_error("Invalid or missing API key.", 401)
+    job = get_job_application(job_app_id)
+    if not job or job.user_id != user["user_id"]:
+        return _api_error("Job not found.", 404)
+    return JSONResponse({"success": True, "job": dataclasses.asdict(job)})
+
+
 @app.get("/jobs/queue", response_class=HTMLResponse)
 async def jobs_queue(request: Request, status: str = ""):
     if not _is_authenticated(request):

@@ -14,7 +14,14 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [events, setEvents] = useState<EventItem[]>([]);
   const [result, setResult] = useState<any>(null);
+  const [companyUrl, setCompanyUrl] = useState("");
   const [error, setError] = useState("");
+
+  // Editable draft fields — pre-filled from the AI draft, tweak before saving.
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [copied, setCopied] = useState(false);
 
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -33,6 +40,10 @@ export default function Home() {
     setLoading(true);
     setEvents([]);
     setResult(null);
+    setCompanyUrl("");
+    setSubject("");
+    setBody("");
+    setSaveState("idle");
     setError("");
 
     try {
@@ -61,6 +72,9 @@ export default function Home() {
           const data = JSON.parse(e.data);
           if (data.step === "__result__") {
             setResult(data.result);
+            setCompanyUrl(data.url || "");
+            setSubject(data.result?.subject || "");
+            setBody(data.result?.body || "");
             setLoading(false);
             sse.close();
           } else if (data.step === "error") {
@@ -94,6 +108,38 @@ export default function Home() {
     handleSearch(query);
   };
 
+  const handleSaveDraft = async () => {
+    setSaveState("saving");
+    try {
+      const formData = new URLSearchParams();
+      formData.append("company_name", result?.company_name || query);
+      formData.append("company_url", companyUrl);
+      formData.append("subject", subject);
+      formData.append("body", body);
+      formData.append("rationale", result?.rationale || "");
+
+      const res = await fetch(`${API_BASE_URL}/draft/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: formData.toString(),
+        credentials: "include",
+      });
+      setSaveState(res.ok ? "saved" : "error");
+    } catch {
+      setSaveState("error");
+    }
+  };
+
+  const handleCopyBody = async () => {
+    try {
+      await navigator.clipboard.writeText(body);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard access denied — nothing sensible to do
+    }
+  };
+
   useEffect(() => {
     return () => {
       if (eventSourceRef.current) eventSourceRef.current.close();
@@ -107,7 +153,11 @@ export default function Home() {
   const rationale = result?.rationale ?? "Extracting workflow intelligence...";
   const contactTitle = result?.contact_title;
   const contactName = result?.contact_name;
+  const contactEmail = result?.contact_email;
   const roleToOffer = result?.role_to_offer;
+  const contactLine = contactName
+    ? `${contactName}${contactTitle ? " — " + contactTitle : ""}`
+    : contactTitle || "Not found on website";
 
   return (
     <div>
@@ -232,6 +282,71 @@ export default function Home() {
             </div>
           )}
         </div>
+
+        {/* Draft Ready — the actual outreach email, editable before saving */}
+        {result && (
+          <div className="card-light flex flex-col gap-4" style={{ marginTop: "1.5rem" }}>
+            <div className="flex justify-between items-center border-b border-[var(--border-color)] pb-4">
+              <div className="flex items-center gap-3">
+                <h2 className="text-h3">✅ Draft Ready</h2>
+                {result.from_cache && <span className="badge badge-warning">📦 from database</span>}
+              </div>
+              {companyUrl && (
+                <a href={companyUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-[var(--accent-blue)] hover:underline">
+                  {companyUrl} ↗
+                </a>
+              )}
+            </div>
+
+            <div className="flex gap-4 flex-wrap">
+              <div style={{ flex: "1 1 200px" }}>
+                <div className="text-xs text-muted mb-1">ROLE BEING OFFERED</div>
+                <div className="text-sm font-medium">{roleToOffer || "—"}</div>
+              </div>
+              <div style={{ flex: "1 1 200px" }}>
+                <div className="text-xs text-muted mb-1">EMAIL RECIPIENT</div>
+                <div className="text-sm font-medium">{contactLine}</div>
+                {contactEmail && <div className="text-xs" style={{ color: "var(--success)" }}>{contactEmail}</div>}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium">Subject</label>
+              <input
+                type="text"
+                className="input"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+              />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium">Body <span className="text-xs text-muted">(editable)</span></label>
+              <textarea
+                className="input"
+                rows={10}
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                style={{ resize: "vertical", fontFamily: "inherit" }}
+              />
+            </div>
+
+            <div className="text-sm" style={{ color: "var(--text-secondary)" }}>
+              🧠 <strong>Rationale:</strong> {rationale}
+            </div>
+
+            <div className="flex gap-2 items-center">
+              <button onClick={handleSaveDraft} className="btn btn-primary" disabled={saveState === "saving"}>
+                {saveState === "saving" ? "Saving..." : "💾 Save to Drafts"}
+              </button>
+              <button onClick={handleCopyBody} className="btn btn-secondary" type="button">
+                {copied ? "Copied!" : "📋 Copy Body"}
+              </button>
+              {saveState === "saved" && <span className="text-sm" style={{ color: "var(--success)" }}>Saved.</span>}
+              {saveState === "error" && <span className="text-sm" style={{ color: "var(--error)" }}>Failed to save.</span>}
+            </div>
+          </div>
+        )}
 
         {/* Active Signal Path */}
         <div className="card-dark">
