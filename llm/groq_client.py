@@ -41,7 +41,11 @@ def _get_client():
                 from groq import Groq
                 # max_retries=0: we own the retry loop below. The SDK's built-in
                 # retries were stacking on top of ours and multiplying backoff.
-                _client = Groq(api_key=get_groq_api_key(), max_retries=0)
+                # timeout=30: without one, a stalled connection hangs forever —
+                # observed hanging a whole parallel scoring batch indefinitely
+                # (ThreadPoolExecutor waits on every future, including a stuck
+                # one) with zero CPU activity and no error ever surfacing.
+                _client = Groq(api_key=get_groq_api_key(), max_retries=0, timeout=30.0)
     return _client
 
 
@@ -88,6 +92,13 @@ def groq_json_call(
                 response_format={"type": "json_object"},
                 temperature=0.7,
                 max_tokens=max_tokens,
+                # gpt-oss models spend part of the completion budget on hidden
+                # reasoning before the actual JSON answer; at default effort
+                # that reasoning was eating the whole max_tokens budget and
+                # truncating before valid JSON came out ("max completion
+                # tokens reached before generating a valid document"). "low"
+                # leaves enough room for the answer itself.
+                reasoning_effort="low",
             )
             return response.choices[0].message.content
         except Exception as exc:

@@ -78,7 +78,11 @@ def score_job(
     )
     try:
         import json as _json
-        raw = groq_json_call(system=_SYSTEM, user=prompt)
+        # Scoring output is small (a score + a short rationale + a few tags) —
+        # a tight max_tokens keeps each call's declared token demand low, which
+        # matters a lot here since a single search can fire up to max_to_score
+        # of these back to back against Groq's per-minute token budget.
+        raw = groq_json_call(system=_SYSTEM, user=prompt, label="job_matcher", max_tokens=600)
         result = _json.loads(raw) if isinstance(raw, str) else raw
         score = int(result.get("score", 0))
         return {

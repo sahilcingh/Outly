@@ -90,7 +90,7 @@ def generate_cover_letter(
 
     try:
         import json as _json
-        raw = groq_json_call(system=_SYSTEM, user=prompt)
+        raw = groq_json_call(system=_SYSTEM, user=prompt, label="cover_letter")
         result = _json.loads(raw) if isinstance(raw, str) else raw
         return {
             "cover_letter": str(result.get("cover_letter", "")).strip(),
