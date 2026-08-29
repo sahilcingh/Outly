@@ -52,10 +52,14 @@ def get_database_url() -> str | None:
     return os.getenv("DATABASE_URL", "").strip() or None
 
 
-# Groq deprecated llama-3.3-70b-versatile (now 404s) — openai/gpt-oss-120b is the
-# current flagship model on Groq's free tier with equivalent JSON-mode support.
-GEMINI_DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")  # kept for fallback
+# Groq model — use a model available on your Groq account.
+# Run: curl https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY"
+# to list available models. Note: llama-3.1-70b-versatile was decommissioned.
 GROQ_DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+
+
+# Gemini model — gemini-2.0-flash
+GEMINI_DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 
 def get_secret_key() -> str:

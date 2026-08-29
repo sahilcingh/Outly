@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { API_BASE_URL } from "../config";
 
 type JobApplication = {
   id: number;
@@ -25,7 +26,9 @@ export default function JobsPage() {
 
   const fetchQueue = async () => {
     try {
-      const res = await fetch("/backend/api/jobs/queue");
+      const res = await fetch(`${API_BASE_URL}/api/v1/jobs/queue`, {
+        credentials: "include",
+      });
       if (res.ok) {
         const data = await res.json();
         setJobs(data.jobs || []);
@@ -56,12 +59,13 @@ export default function JobsPage() {
       formData.append("min_score", "60");
       formData.append("remote_only", location.toLowerCase() === "remote" ? "true" : "false");
 
-      const res = await fetch("/backend/jobs", {
+      const res = await fetch(`${API_BASE_URL}/jobs`, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
         },
         body: formData.toString(),
+        credentials: "include",
       });
 
       if (!res.ok) {

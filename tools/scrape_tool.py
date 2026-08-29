@@ -47,7 +47,21 @@ def _fetch_html(url: str) -> str:
             with urllib.request.urlopen(req, timeout=15) as response:
                 return response.read().decode('utf-8', errors='ignore')
         except Exception as fallback_e:
-            raise Exception(f"All scraping attempts failed. Last error: {fallback_e}")
+            log.debug("urllib failed (%s) — trying Playwright fallback.", fallback_e)
+            try:
+                # Attempt 3: Playwright headless browser (for SPAs & advanced bot protection)
+                from playwright.sync_api import sync_playwright
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(headless=True)
+                    context = browser.new_context(user_agent=HEADERS["User-Agent"])
+                    page = context.new_page()
+                    # Use domcontentloaded to avoid waiting for slow external resources like ads
+                    page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                    html = page.content()
+                    browser.close()
+                    return html
+            except Exception as pw_e:
+                raise Exception(f"All scraping attempts (including Playwright) failed. Last error: {pw_e}")
 
 def scrape(url: str) -> str:
     """

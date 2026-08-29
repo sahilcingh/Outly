@@ -24,7 +24,7 @@ class TargetContext:
     contact_email: str | None = None  # e.g. "priya@company.com" (rarely public)
 
     # Live signals fetched during pipeline execution
-    hiring_signals: list[str] = field(default_factory=list)   # open job titles
+    hiring_signals: list[dict] = field(default_factory=list)  # open job titles + urls
     news_signals: list[dict] = field(default_factory=list)    # recent headlines
 
     @property

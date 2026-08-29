@@ -233,6 +233,35 @@ def run_pipeline(
                     except Exception:
                         continue
 
+            # Fallback 2: Wikipedia extract — reliable for any company that blocks bots
+            if not raw_text or len(raw_text.strip()) < 50:
+                log.warning("All scraping failed — trying Wikipedia extract fallback.")
+                try:
+                    import requests as _req
+                    _wiki_resp = _req.get(
+                        "https://en.wikipedia.org/w/api.php",
+                        params={
+                            "action": "query",
+                            "titles": query,
+                            "prop": "extracts",
+                            "exintro": True,       # intro section only (concise, focused)
+                            "explaintext": True,   # plain text, no HTML
+                            "redirects": True,
+                            "format": "json",
+                        },
+                        headers={"User-Agent": "Outly/1.0"},
+                        timeout=8,
+                    )
+                    _wiki_pages = _wiki_resp.json().get("query", {}).get("pages", {})
+                    for _page in _wiki_pages.values():
+                        _extract = (_page.get("extract") or "").strip()
+                        if _extract and len(_extract) >= 50:
+                            raw_text = f"{result.title}. {_extract}"
+                            log.info("Wikipedia extract fallback succeeded (%d chars).", len(raw_text))
+                            break
+                except Exception as _wiki_e:
+                    log.debug("Wikipedia extract fallback failed: %s", _wiki_e)
+
             # Last resort: use search snippet — fetch one if probe bypassed DuckDuckGo
             if not raw_text or len(raw_text.strip()) < 50:
                 snippet = result.snippet

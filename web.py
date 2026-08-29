@@ -109,6 +109,7 @@ app = FastAPI(title="B2B Prospecting Agent", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -612,17 +613,6 @@ async def batch_upload(request: Request, file: UploadFile = File(...)):
 # Drafts review UI
 # ---------------------------------------------------------------------------
 
-@app.get("/api/drafts")
-async def api_list_drafts(request: Request, status: str = ""):
-    """JSON drafts feed for the decoupled (Next.js) frontend."""
-    if not _is_authenticated(request):
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
-    init_db()
-    filter_status = status if status in ("draft", "approved", "sent", "rejected") else None
-    drafts = list_drafts(status=filter_status, user_id=_current_user_id(request))
-    return JSONResponse({"drafts": [dataclasses.asdict(d) for d in drafts]})
-
-
 @app.get("/drafts", response_class=HTMLResponse)
 async def drafts_page(request: Request, status: str = ""):
     if not _is_authenticated(request):
@@ -714,7 +704,8 @@ async def revoke_key(request: Request, key_id: int):
 # ---------------------------------------------------------------------------
 
 def _api_auth(request: Request) -> dict | None:
-    """Validate Bearer token from Authorization header. Returns user row or None."""
+    """Validate Bearer token from Authorization header. Returns user row or None.
+    Falls back to session auth so the Next.js frontend can use /api/v1/* endpoints."""
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         key = auth[7:].strip()
@@ -723,6 +714,10 @@ def _api_auth(request: Request) -> dict | None:
     key = request.headers.get("X-API-Key", "").strip()
     if key:
         return get_user_by_api_key(key)
+    # Fallback: accept session-based auth (browser / Next.js frontend)
+    if _is_authenticated(request):
+        user_id = _current_user_id(request) or 1
+        return {"user_id": user_id, "email": _current_user_email(request) or "local"}
     return None
 
 
@@ -1443,15 +1438,20 @@ async def jobs_search(
     return RedirectResponse(url=f"/jobs?job_id={job_id}", status_code=303)
 
 
-@app.get("/api/jobs/queue")
+@app.get("/api/v1/jobs/queue")
 async def api_jobs_queue(request: Request, status: str = ""):
-    """JSON job-queue feed for the decoupled (Next.js) frontend."""
-    if not _is_authenticated(request):
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    """JSON job-queue feed — same auth as the rest of /api/v1/*."""
+    user = _api_auth(request)
+    if not user:
+        return _api_error("Invalid or missing API key.", 401)
     init_jobs_table()
     filter_status = status if status in ("queued", "approved", "applied", "rejected") else None
-    jobs = list_job_applications(user_id=_current_user_id(request), status=filter_status)
-    return JSONResponse({"jobs": [dataclasses.asdict(j) for j in jobs]})
+    jobs = list_job_applications(user_id=user["user_id"], status=filter_status)
+    return JSONResponse({
+        "success": True,
+        "count": len(jobs),
+        "jobs": [dataclasses.asdict(j) for j in jobs],
+    })
 
 
 @app.get("/jobs/queue", response_class=HTMLResponse)

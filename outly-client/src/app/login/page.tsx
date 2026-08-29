@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { API_BASE_URL } from "../config";
 
 export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -27,10 +28,11 @@ export default function LoginPage() {
       const body = new URLSearchParams({ email, password });
       if (mode === "register") body.append("confirm_password", confirmPassword);
 
-      const res = await fetch(`/backend/${mode}`, {
+      const res = await fetch(`${API_BASE_URL}/${mode}`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: body.toString(),
+        credentials: "include",
       });
       const data = await res.json();
       if (!res.ok || data.error) {
