@@ -1196,7 +1196,7 @@ _JOB_STEP_LABELS = {
     "parsing_resume": "📄 Parsing resume...",
     "extracting":     "🔍 Extracting candidate profile...",
     "profile_ready":  "✅ Profile extracted",
-    "searching":      "🔎 Searching LinkedIn & Indeed...",
+    "searching":      "🔎 Searching LinkedIn, Indeed, Naukri, Glassdoor & Google...",
     "scoring":        "🧠 Scoring job matches...",
     "generating":     "✍️  Writing cover letters...",
     "saving":         "💾 Saving to review queue...",
@@ -1216,7 +1216,7 @@ def _run_job_search_thread(
     candidate_name: str,
 ) -> None:
     from llm.skills_extractor import extract_skills
-    from tools.job_search import search_jobs
+    from tools.job_search import search_jobs, filter_by_geo
     from llm.job_matcher import score_jobs_parallel
     from llm.cover_letter import generate_cover_letter
 
@@ -1256,12 +1256,23 @@ def _run_job_search_thread(
         emit("searching", f"Searching for '{query}' in {location}...")
         listings = search_jobs(
             query=query,
-            location=location or "Remote",
+            location=location or "India",
             results_per_site=20,
             hours_old=168,
             remote_only=remote_only,
         )
 
+        if not listings:
+            emit("error", "No jobs found. Try different keywords or location.")
+            with _jobs_lock:
+                _jobs[job_id]["done"] = True
+                _jobs[job_id]["result"] = {"saved": 0}
+            return
+
+        # India-only: drop every listing not based in India, remote included.
+        listings, geo_dropped = filter_by_geo(listings)
+        if geo_dropped:
+            emit("searching", f"Filtered {geo_dropped} roles outside India...")
         if not listings:
             emit("error", "No jobs found. Try different keywords or location.")
             with _jobs_lock:

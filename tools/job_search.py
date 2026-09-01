@@ -1,5 +1,5 @@
 """
-Job search via python-jobspy — LinkedIn + Indeed scraping.
+Job search via python-jobspy — LinkedIn, Indeed, Naukri, Glassdoor, Google scraping.
 Falls back gracefully if one site blocks; returns empty list on total failure.
 """
 
@@ -10,6 +10,11 @@ import time
 from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
+
+# naukri is India's largest job board — high-value now that search is India-only.
+# glassdoor/google add supplementary coverage. zip_recruiter (US), bayt (Gulf),
+# and bdjobs (Bangladesh), also supported by jobspy, aren't relevant here.
+_SITES = ["linkedin", "indeed", "naukri", "glassdoor", "google"]
 
 
 @dataclass
@@ -97,9 +102,9 @@ def search_jobs(
     max_results: int = 40,          # hard ceiling on returned listings
 ) -> list[JobListing]:
     """
-    Search LinkedIn and Indeed for jobs matching query.
+    Search LinkedIn, Indeed, Naukri, Glassdoor, and Google for jobs matching query.
     Returns a flat list of JobListing objects, capped at `max_results`.
-    Tries LinkedIn + Indeed together; on block retries each site individually.
+    Tries all sites together first; on failure retries each site individually.
     jobspy can over-deliver past results_wanted, so we truncate to max_results.
     """
     try:
@@ -117,7 +122,10 @@ def search_jobs(
                 site_name=sites,
                 search_term=query,
                 location=location,
-                results_wanted=results_per_site * len(sites),
+                # results_wanted is a per-site target inside jobspy, not a
+                # total split across sites — pass it through as-is regardless
+                # of how many sites are in this batch.
+                results_wanted=results_per_site,
                 hours_old=hours_old,
                 is_remote=bool(remote_only),
                 country_indeed="India",
@@ -129,16 +137,24 @@ def search_jobs(
             log.warning("scrape_jobs failed for %s: %s", sites, e)
             return None
 
-    # Try both sites together first; retry individually on failure
-    df = _scrape(["linkedin", "indeed"])
+    # Try every site together first (fastest path). jobspy re-raises a
+    # worker's exception from the whole batched call, so one flaky/blocked
+    # site (Glassdoor and Naukri are more bot-sensitive than LinkedIn/Indeed)
+    # would otherwise take down the entire search. Fall back to scraping
+    # each site individually and merging whatever succeeds.
+    df = _scrape(_SITES)
     if df is None:
-        log.warning("Combined scrape failed — retrying LinkedIn alone...")
-        time.sleep(2)
-        df = _scrape(["linkedin"])
-    if df is None:
-        log.warning("LinkedIn alone failed — retrying Indeed alone...")
-        time.sleep(2)
-        df = _scrape(["indeed"])
+        log.warning("Combined scrape failed — retrying each site individually...")
+        import pandas as pd
+        frames = []
+        for site in _SITES:
+            time.sleep(2)
+            site_df = _scrape([site])
+            if site_df is not None:
+                frames.append(site_df)
+            else:
+                log.warning("%s scrape failed/returned nothing.", site)
+        df = pd.concat(frames, ignore_index=True) if frames else None
     if df is None:
         log.warning("All job scraping attempts failed.")
         return []
@@ -181,6 +197,25 @@ def search_jobs(
 
     log.info("Found %d job listings for query '%s' (cap %d)", len(listings), query, max_results)
     return listings
+
+
+def is_india_location(location: str) -> bool:
+    """True if a location string reads as India (jobspy formats vary:
+    'Bengaluru, Karnataka, India', 'Mumbai, MH, IN', bare 'India', etc.)."""
+    loc = (location or "").lower().strip()
+    if not loc:
+        return False
+    return "india" in loc or loc == "in" or loc.endswith(", in")
+
+
+def filter_by_geo(listings: list[JobListing]) -> tuple[list[JobListing], int]:
+    """
+    Business rule: India-only. Drops every listing not based in India,
+    remote included — a remote role for a US/EU team still doesn't count.
+    Returns (kept_listings, dropped_count).
+    """
+    kept = [l for l in listings if is_india_location(l.location)]
+    return kept, len(listings) - len(kept)
 
 
 def search_jobs_locations(

@@ -56,7 +56,7 @@ export default function JobsPage() {
   const [resumeText, setResumeText] = useState("");
   const [candidateName, setCandidateName] = useState("");
   const [keywords, setKeywords] = useState("");
-  const [location, setLocation] = useState("Remote");
+  const [location, setLocation] = useState("India");
   const [minScore, setMinScore] = useState(60);
   const [remoteOnly, setRemoteOnly] = useState(false);
 
@@ -155,7 +155,7 @@ export default function JobsPage() {
       formData.append("resume_text", resumeText);
       formData.append("candidate_name", candidateName);
       formData.append("keywords", keywords);
-      formData.append("location", location || "Remote");
+      formData.append("location", location || "India");
       formData.append("min_score", String(minScore));
       formData.append("remote_only", remoteOnly ? "true" : "false");
 
@@ -189,7 +189,7 @@ export default function JobsPage() {
     <div className="animate-fade-in">
       <div className="mb-6">
         <h1 className="text-hero" style={{ fontSize: "2.5rem", marginBottom: "0.5rem" }}>Automated Job Search</h1>
-        <p className="text-subhero">Upload your resume — Outly searches LinkedIn &amp; Indeed, scores matches, and writes tailored cover letters.</p>
+        <p className="text-subhero">Upload your resume — Outly searches LinkedIn, Indeed, Naukri, Glassdoor &amp; Google, scores matches, and writes tailored cover letters.</p>
       </div>
 
       <div className="flex gap-6 flex-wrap lg:flex-nowrap items-start">
@@ -245,9 +245,10 @@ export default function JobsPage() {
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium">Location</label>
               <input
-                type="text" className="input" placeholder="Remote, New York, etc."
+                type="text" className="input" placeholder="India, Bengaluru, Remote (India), etc."
                 value={location} onChange={(e) => setLocation(e.target.value)} disabled={loading}
               />
+              <div className="text-xs text-muted">Only India-based roles are kept — remote roles for teams outside India are filtered out too.</div>
             </div>
 
             <div className="flex flex-col gap-2">
