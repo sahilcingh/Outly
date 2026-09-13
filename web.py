@@ -915,11 +915,8 @@ async def telegram_webhook(request: Request):
     except Exception:
         return JSONResponse({"ok": True})
 
-    # Stray callback (e.g. an old button in chat history) — just acknowledge it.
     if "callback_query" in update:
-        from tools.telegram_bot import answer_callback
-        answer_callback(update["callback_query"]["id"],
-                        "Applications are manual now — open the PDF and tap Apply.")
+        _tg_handle_callback(update["callback_query"])
         return JSONResponse({"ok": True})
 
     # Message (text or document)
@@ -935,28 +932,155 @@ async def telegram_webhook(request: Request):
         if not text:
             return JSONResponse({"ok": True})
 
-        if text.startswith("/applied_"):
-            try:
-                job_id = int(text.split("_", 1)[1])
-                update_job_status(job_id, "applied")
-                from tools.telegram_bot import send_message
-                send_message(f"✅ Job #{job_id} marked as applied!")
-            except Exception:
-                pass
-        elif text in ("/start", "/Start"):
-            _tg_help(chat_id)
-        elif text == "/status":
-            _tg_status(chat_id)
-        elif text == "/queue":
-            threading.Thread(target=_tg_send_queue_pdf, args=(chat_id,), daemon=True).start()
-        elif text == "/help":
-            _tg_help(chat_id)
-        else:
-            from tools.telegram_bot import send_message
-            send_message("I didn't recognize that. Send /help for commands, "
-                         "/queue for your jobs PDF, or attach a resume PDF to update your profile.")
+        _tg_dispatch_command(text, chat_id)
 
     return JSONResponse({"ok": True})
+
+
+def _tg_dispatch_command(text: str, chat_id: int) -> None:
+    """Route an exact command; free text falls through to the NL classifier."""
+    from tools.telegram_bot import send_message
+
+    if text.startswith("/applied_"):
+        try:
+            job_id = int(text.split("_", 1)[1])
+            update_job_status(job_id, "applied")
+            send_message(f"✅ Job #{job_id} marked as applied!")
+        except Exception:
+            pass
+    elif text in ("/start", "/Start", "/help"):
+        _tg_help(chat_id)
+    elif text == "/status":
+        _tg_status(chat_id)
+    elif text == "/queue":
+        threading.Thread(target=_tg_send_queue_pdf, args=(chat_id,), daemon=True).start()
+    elif text == "/search":
+        send_message("🔍 Starting a search now — this can take a minute or two…")
+        threading.Thread(target=_tg_run_search_now, daemon=True).start()
+    elif text.startswith("/location "):
+        _tg_set_location(text[len("/location "):].strip())
+    elif text.startswith("/minscore "):
+        _tg_set_min_score(text[len("/minscore "):].strip())
+    elif text.startswith("/remote "):
+        _tg_set_remote(text[len("/remote "):].strip())
+    else:
+        _tg_handle_free_text(text, chat_id)
+
+
+def _tg_handle_callback(callback_query: dict) -> None:
+    """Approve/Reject inline button taps from a job digest message."""
+    from tools.telegram_bot import answer_callback, send_message
+
+    data = callback_query.get("data", "")
+    cq_id = callback_query["id"]
+
+    try:
+        action, job_id_s = data.split("_", 1)
+        job_id = int(job_id_s)
+    except (ValueError, KeyError):
+        answer_callback(cq_id, "Unrecognized button.")
+        return
+
+    if action == "approve":
+        found, outcome = _approve_job(job_id)
+        if not found:
+            answer_callback(cq_id, "Job not found — it may have been removed.")
+            return
+        if outcome == "applied":
+            answer_callback(cq_id, "✅ Approved — application email sent!")
+            send_message(f"✅ Job #{job_id} approved and application email sent.")
+        elif outcome == "approve_failed":
+            answer_callback(cq_id, "Approved, but the email failed to send.")
+            send_message(f"⚠️ Job #{job_id} approved, but sending the application email failed — "
+                         f"send it manually using the cover letter in the PDF.")
+        else:  # approved_ats
+            answer_callback(cq_id, "✅ Approved — open the job link and apply.")
+            send_message(f"✅ Job #{job_id} approved. Open its link (in the PDF) and apply, "
+                         f"then send /applied_{job_id} once done.")
+    elif action == "reject":
+        found = _reject_job(job_id)
+        answer_callback(cq_id, "Rejected." if found else "Job not found.")
+        if found:
+            send_message(f"❌ Job #{job_id} rejected.")
+    else:
+        answer_callback(cq_id, "Unrecognized button.")
+
+
+def _tg_run_search_now() -> None:
+    from scheduler.job_runner import run_scheduled_search
+    try:
+        run_scheduled_search()
+    except Exception as e:
+        from tools.telegram_bot import send_message
+        log.exception("On-demand /search failed")
+        send_message(f"⚠️ Search failed: {e}")
+
+
+def _tg_set_location(value: str) -> None:
+    from tools.telegram_bot import send_message
+    from storage.settings import set_setting
+    if not value:
+        send_message("Usage: /location <place> — e.g. /location Mumbai, or /location India")
+        return
+    set_setting("location", value, get_scheduler_user_id())
+    send_message(f"📍 Search location set to *{value}*. Applies from the next search onward.")
+
+
+def _tg_set_min_score(value: str) -> None:
+    from tools.telegram_bot import send_message
+    from storage.settings import set_setting
+    try:
+        score = max(0, min(100, int(value)))
+    except ValueError:
+        send_message("Usage: /minscore <0-100> — e.g. /minscore 65")
+        return
+    set_setting("min_score", score, get_scheduler_user_id())
+    send_message(f"🎯 Minimum match score set to *{score}*. Applies from the next search onward.")
+
+
+def _tg_set_remote(value: str) -> None:
+    from tools.telegram_bot import send_message
+    from storage.settings import set_setting
+    v = value.strip().lower()
+    if v in ("on", "true", "yes"):
+        remote = True
+    elif v in ("off", "false", "no"):
+        remote = False
+    else:
+        send_message("Usage: /remote on  or  /remote off")
+        return
+    set_setting("remote_only", remote, get_scheduler_user_id())
+    send_message(f"🏠 Remote-only search turned *{'on' if remote else 'off'}*. Applies from the next search onward.")
+
+
+def _tg_handle_free_text(text: str, chat_id: int) -> None:
+    """Free text that isn't an exact command — classify intent via Groq and
+    dispatch to the same handlers the exact commands use."""
+    from tools.telegram_bot import send_message
+    from tools.telegram_intent import classify_intent
+
+    intent = classify_intent(text)
+    action = intent.get("action")
+    value = intent.get("value")
+
+    if action == "search":
+        send_message("🔍 Starting a search now — this can take a minute or two…")
+        threading.Thread(target=_tg_run_search_now, daemon=True).start()
+    elif action == "status":
+        _tg_status(chat_id)
+    elif action == "queue":
+        threading.Thread(target=_tg_send_queue_pdf, args=(chat_id,), daemon=True).start()
+    elif action == "help":
+        _tg_help(chat_id)
+    elif action == "set_location" and value:
+        _tg_set_location(str(value))
+    elif action == "set_min_score" and value is not None:
+        _tg_set_min_score(str(value))
+    elif action == "set_remote" and value is not None:
+        _tg_set_remote("on" if value in (True, "true", "on", "yes") else "off")
+    else:
+        send_message("I didn't recognize that. Send /help for commands, "
+                     "/queue for your jobs PDF, or attach a resume PDF to update your profile.")
 
 
 # ── Telegram action handlers ────────────────────────────────────────────────
@@ -1175,14 +1299,19 @@ def _tg_help(chat_id: int) -> None:
     send_message(
         "🤖 *Outly Job Bot*\n\n"
         "I search jobs for you on a schedule and send a *PDF* of the best matches. "
-        "Each job has a tappable *Apply* link — open the PDF, pick the ones you like, "
-        "and apply directly.\n\n"
+        "Each job has Approve/Reject buttons and a tappable *Apply* link.\n\n"
         "*Commands*\n"
         "📄 *Send a resume PDF* — update your profile (used in the next search)\n"
+        "/search — Run a search right now, don't wait for the schedule\n"
         "/queue — Get the PDF of your current matched jobs\n"
         "/status — Show job counts by status\n"
         "`/applied_ID` — Mark job #ID as applied\n"
+        "/location <place> — Change search location, e.g. `/location Mumbai`\n"
+        "/minscore <0-100> — Change the minimum match score\n"
+        "/remote on|off — Restrict search to remote-only roles\n"
         "/help — Show this message\n\n"
+        "You can also just type naturally — e.g. \"search now\" or \"only show me 70+ matches\" "
+        "— I'll figure out what you mean.\n\n"
         "🕐 *Auto-schedule:* Weekdays 9:30 AM & 2:30 PM IST\n"
         "Mon: 20 jobs | Other days: 10 jobs"
     )
@@ -1506,13 +1635,15 @@ async def job_detail(request: Request, job_app_id: int):
     )
 
 
-@app.post("/jobs/{job_app_id}/approve")
-async def job_approve(request: Request, job_app_id: int):
-    if not _is_authenticated(request):
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+def _approve_job(job_app_id: int) -> tuple[bool, str]:
+    """
+    Shared approve logic for the web route and the Telegram callback button.
+    Returns (found, outcome) where outcome is one of:
+    "applied" | "approve_failed" | "approved_ats".
+    """
     job = get_job_application(job_app_id)
     if not job:
-        return HTMLResponse("Job not found.", status_code=404)
+        return False, "not_found"
 
     if job.apply_method == "email" and job.contact_email:
         from tools.email_sender import send_application_email
@@ -1523,18 +1654,38 @@ async def job_approve(request: Request, job_app_id: int):
             from_name=job.candidate_name or "",
         )
         update_job_status(job_app_id, "applied" if success else "approved")
-        return RedirectResponse(url=f"/jobs/{job_app_id}?applied={'1' if success else '0'}", status_code=303)
+        return True, "applied" if success else "approve_failed"
     else:
-        # ATS / manual — mark approved, redirect to job URL in detail page
+        # ATS / manual — mark approved, apply link is in the job detail page / PDF
         update_job_status(job_app_id, "approved")
-        return RedirectResponse(url=f"/jobs/{job_app_id}?ats=1", status_code=303)
+        return True, "approved_ats"
+
+
+def _reject_job(job_app_id: int) -> bool:
+    job = get_job_application(job_app_id)
+    if not job:
+        return False
+    update_job_status(job_app_id, "rejected")
+    return True
+
+
+@app.post("/jobs/{job_app_id}/approve")
+async def job_approve(request: Request, job_app_id: int):
+    if not _is_authenticated(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    found, outcome = _approve_job(job_app_id)
+    if not found:
+        return HTMLResponse("Job not found.", status_code=404)
+    if outcome in ("applied", "approve_failed"):
+        return RedirectResponse(url=f"/jobs/{job_app_id}?applied={'1' if outcome == 'applied' else '0'}", status_code=303)
+    return RedirectResponse(url=f"/jobs/{job_app_id}?ats=1", status_code=303)
 
 
 @app.post("/jobs/{job_app_id}/reject")
 async def job_reject(request: Request, job_app_id: int):
     if not _is_authenticated(request):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
-    update_job_status(job_app_id, "rejected")
+    _reject_job(job_app_id)
     return RedirectResponse(url="/jobs/queue", status_code=303)
 
 

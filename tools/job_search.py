@@ -1,5 +1,5 @@
 """
-Job search via python-jobspy — LinkedIn, Indeed, Naukri, Glassdoor, Google scraping.
+Job search via python-jobspy — LinkedIn, Indeed, Glassdoor, Google scraping.
 Falls back gracefully if one site blocks; returns empty list on total failure.
 """
 
@@ -11,10 +11,34 @@ from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
 
-# naukri is India's largest job board — high-value now that search is India-only.
-# glassdoor/google add supplementary coverage. zip_recruiter (US), bayt (Gulf),
-# and bdjobs (Bangladesh), also supported by jobspy, aren't relevant here.
-_SITES = ["linkedin", "indeed", "naukri", "glassdoor", "google"]
+# naukri needs a real Akamai-bypassing browser session to get past its
+# reCAPTCHA wall (confirmed 406 in testing) — not worth attempting until
+# that's built, so it's left out rather than burning a request every search.
+# zip_recruiter (US), bayt (Gulf), and bdjobs (Bangladesh) aren't relevant here.
+_SITES = ["linkedin", "indeed", "glassdoor", "google"]
+
+# jobspy's Country.get_glassdoor_url() returns a trailing slash, and the
+# Glassdoor scraper's location lookup separately prepends its own "/" —
+# together that builds "https://www.glassdoor.co.in//findPopularLocationAjax..."
+# (double slash), which Glassdoor's server rejects with 400 "location not
+# parsed". Confirmed against the live site; there's an open, unmerged upstream
+# fix for this. Patched here rather than waiting on a jobspy release.
+def _patch_glassdoor_double_slash() -> None:
+    try:
+        from jobspy.model import Country
+    except ImportError:
+        return
+    if getattr(Country.get_glassdoor_url, "_outly_patched", False):
+        return
+    _orig = Country.get_glassdoor_url
+
+    def _patched(self):
+        return _orig(self).rstrip("/")
+    _patched._outly_patched = True
+    Country.get_glassdoor_url = _patched
+
+
+_patch_glassdoor_double_slash()
 
 
 @dataclass
@@ -102,7 +126,7 @@ def search_jobs(
     max_results: int = 40,          # hard ceiling on returned listings
 ) -> list[JobListing]:
     """
-    Search LinkedIn, Indeed, Naukri, Glassdoor, and Google for jobs matching query.
+    Search LinkedIn, Indeed, Glassdoor, and Google for jobs matching query.
     Returns a flat list of JobListing objects, capped at `max_results`.
     Tries all sites together first; on failure retries each site individually.
     jobspy can over-deliver past results_wanted, so we truncate to max_results.
@@ -139,9 +163,9 @@ def search_jobs(
 
     # Try every site together first (fastest path). jobspy re-raises a
     # worker's exception from the whole batched call, so one flaky/blocked
-    # site (Glassdoor and Naukri are more bot-sensitive than LinkedIn/Indeed)
-    # would otherwise take down the entire search. Fall back to scraping
-    # each site individually and merging whatever succeeds.
+    # site (Glassdoor is more bot-sensitive than LinkedIn/Indeed) would
+    # otherwise take down the entire search. Fall back to scraping each site
+    # individually and merging whatever succeeds.
     df = _scrape(_SITES)
     if df is None:
         log.warning("Combined scrape failed — retrying each site individually...")
@@ -170,6 +194,10 @@ def search_jobs(
         # when jobspy can resolve it, is the employer's real ATS application page
         # (e.g. a company's Workday portal) — prefer it so users land one click
         # closer to actually applying instead of bouncing through the job board.
+        # LinkedIn specifically now gates this behind a sign-in wall for most
+        # listings (confirmed live — the public job page no longer embeds the
+        # external apply URL), so job_url_direct is usually empty for LinkedIn
+        # and the board link is the best we can do there without logging in.
         job_url_direct = _safe_str(row.get("job_url_direct"))
         apply_url = job_url_direct or job_url
 
@@ -199,22 +227,19 @@ def search_jobs(
     return listings
 
 
-def is_india_location(location: str) -> bool:
-    """True if a location string reads as India (jobspy formats vary:
-    'Bengaluru, Karnataka, India', 'Mumbai, MH, IN', bare 'India', etc.)."""
-    loc = (location or "").lower().strip()
-    if not loc:
-        return False
-    return "india" in loc or loc == "in" or loc.endswith(", in")
-
-
 def filter_by_geo(listings: list[JobListing]) -> tuple[list[JobListing], int]:
     """
     Business rule: India-only. Drops every listing not based in India,
     remote included — a remote role for a US/EU team still doesn't count.
     Returns (kept_listings, dropped_count).
+
+    Delegates to tools.location (the same check the Telegram scheduler uses)
+    so there's one source of truth for "is this India" — two separate
+    near-duplicate implementations previously drifted apart and silently
+    dropped Indeed's "State, IN" results in one of them.
     """
-    kept = [l for l in listings if is_india_location(l.location)]
+    from tools.location import is_india_job
+    kept = [l for l in listings if is_india_job(l.location, l.is_remote)]
     return kept, len(listings) - len(kept)
 
 

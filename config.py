@@ -191,13 +191,22 @@ def get_extra_job_keywords() -> list[str]:
     return ["internship", "apprenticeship"]
 
 
-def get_min_match_score() -> int:
+def get_min_match_score(level: str | None = None) -> int:
     """
     Minimum LLM match score (0-100) for a job to enter the queue. Enforces
     strict résumé alignment — off-profile roles (incl. unrelated internships)
     score below this and are dropped. MIN_MATCH_SCORE env override (default 55).
+
+    Entry/junior candidates see far more (and noisier) postings than senior
+    ones, so a fresher/1-2yr candidate gets a higher bar by default —
+    MIN_MATCH_SCORE_ENTRY (default 68) — so only strong matches make the cut.
+    Pass the candidate's level to apply it; omit for the plain default.
     """
+    if level in ("entry", "junior"):
+        raw = os.getenv("MIN_MATCH_SCORE_ENTRY", os.getenv("MIN_MATCH_SCORE", "68"))
+    else:
+        raw = os.getenv("MIN_MATCH_SCORE", "55")
     try:
-        return max(0, min(100, int(os.getenv("MIN_MATCH_SCORE", "55"))))
+        return max(0, min(100, int(raw)))
     except ValueError:
-        return 55
+        return 68 if level in ("entry", "junior") else 55

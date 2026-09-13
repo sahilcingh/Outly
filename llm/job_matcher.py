@@ -41,7 +41,7 @@ If the job clearly requires more seniority than the candidate has — e.g. Senio
 Staff, Lead, Principal, Architect, Manager/Director titles, or the description
 demands significantly more years of experience than the candidate has — CAP the
 score at 30, no matter how well the skills overlap. An over-level role is a poor fit.
-
+{entry_rigor}
 Return exactly this JSON:
 {{
   "score": <integer 0-100>,
@@ -64,10 +64,25 @@ def score_job(
     Returns {"score": int, "rationale": str, "key_matches": list, "gaps": list}
     or a safe default on failure.
     """
+    level = candidate_profile.get("level", "entry")
+    entry_rigor = ""
+    if level in ("entry", "junior"):
+        entry_rigor = (
+            "\nENTRY-LEVEL RIGOR (this candidate is fresher/1-2yr level): entry-level "
+            "job-board listings are high-volume and noisy — many pad requirements, "
+            "mislabel effectively mid-level work as \"junior\", or list skills only "
+            "tangential to the real day-to-day. Score strictly on CONCRETE, "
+            "verifiable overlap between the candidate's actual skills/projects and "
+            "the listing's stated requirements. Do not award 70+ for a generic "
+            "domain match alone (e.g. \"both are software engineering\") without "
+            "real skill/tooling overlap. When genuinely torn between two adjacent "
+            "bands, choose the lower one.\n"
+        )
+
     prompt = _PROMPT.format(
         role_title       = candidate_profile.get("role_title", "Software Engineer"),
         experience_years = candidate_profile.get("experience_years", candidate_profile.get("years_experience", "0-1")),
-        level            = candidate_profile.get("level", "entry"),
+        level            = level,
         skills           = ", ".join(candidate_profile.get("skills", [])[:20]),
         industries       = ", ".join(candidate_profile.get("industries", [])[:5]),
         summary          = (candidate_profile.get("summary", "") or "")[:400],
@@ -75,6 +90,7 @@ def score_job(
         company          = company,
         location         = location,
         description      = (description or "")[:1200],
+        entry_rigor      = entry_rigor,
     )
     try:
         import json as _json

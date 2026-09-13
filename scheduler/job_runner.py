@@ -75,6 +75,7 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     )
     from tools.seniority import level_from_years, filter_by_level, search_query_for_level
     from tools.location import is_india_job, location_rank
+    from storage.settings import get_settings
 
     user_id = get_scheduler_user_id()
     role_title = profile.get("role_title", "Software Engineer")
@@ -86,7 +87,12 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     strict = is_seniority_strict()
     profile["level"] = level  # so the scorer sees it
 
-    locations = get_job_locations()        # Bengaluru first, then India
+    # Chat-settable overrides (via /location, /minscore, /remote) win over the
+    # global env-var defaults for this user.
+    prefs = get_settings(user_id)
+    locations = [prefs["location"]] if prefs.get("location") else get_job_locations()
+    remote_only_pref = bool(prefs.get("remote_only", False))
+
     fresh_hours = get_job_hours_fresh()    # tight window, tried first (~couple hrs)
     max_hours = get_job_hours_old()        # widen to this if fresh is empty (cap)
     base_query = search_query_for_level(role_title, level)
@@ -109,7 +115,8 @@ def _search_and_queue(profile: dict, limit: int) -> None:
         for q, loc in pairs:
             try:
                 batch = search_jobs(query=q, location=loc, results_per_site=12,
-                                    hours_old=hours, max_results=40)
+                                    hours_old=hours, max_results=40,
+                                    remote_only=remote_only_pref)
             except Exception as e:
                 log.warning("search failed for %r @ %s: %s", q, loc, e)
                 continue
@@ -118,7 +125,8 @@ def _search_and_queue(profile: dict, limit: int) -> None:
             if len(by_url) >= 60:
                 break
         batch = list(by_url.values())
-        # India only (remote allowed); drop US/abroad
+        # India only — a remote role isn't kept just because it's remote;
+        # a location with no India marker at all is dropped too.
         batch = [l for l in batch if is_india_job(l.location, l.is_remote)]
         # At/below the candidate's seniority ceiling (keeps internships/apprenticeships)
         batch, _dropped = filter_by_level(batch, level, strict)
@@ -182,7 +190,7 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     # roles (full-time, internship, or apprenticeship) score high; off-domain
     # ones score low and are excluded here — so only résumé-matching jobs queue.
     from config import get_min_match_score
-    min_score = get_min_match_score()
+    min_score = int(prefs["min_score"]) if prefs.get("min_score") is not None else get_min_match_score(level)
     before_gate = len(scored)
     scored = [j for j in scored if j.get("score", 0) >= min_score]
     if before_gate - len(scored):

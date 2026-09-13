@@ -75,6 +75,12 @@ def job_allowed(title: str, candidate_level: str, strict: bool = True) -> bool:
     job_level = infer_job_level(title)
     if job_level is None:
         return True
+    # Floor: internships/trainee/fresher roles rank lowest, so they always
+    # passed the ceiling check below for every candidate — a mid/senior
+    # engineer would still get internships in their results. Once a
+    # candidate has adequate experience (mid and above), stop showing them.
+    if job_level == "entry" and _RANK.get(candidate_level, 0) >= _RANK["mid"]:
+        return False
     return _RANK[job_level] <= _ceiling(candidate_level, strict)
 
 

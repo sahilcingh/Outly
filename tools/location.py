@@ -42,7 +42,11 @@ def is_bengaluru(location: str) -> bool:
 
 
 def _has_india_signal(loc: str) -> bool:
-    return any(c in loc for c in _INDIA_CITIES)
+    if any(c in loc for c in _INDIA_CITIES):
+        return True
+    # Indeed commonly returns "<state abbrev>, IN" (2-letter country code),
+    # e.g. "TN, IN", "UL, IN" — no city/state name we'd otherwise recognize.
+    return bool(re.search(r",\s*in$", loc)) or loc == "in"
 
 
 def is_india_job(location: str, is_remote: bool = False) -> bool:
@@ -50,6 +54,12 @@ def is_india_job(location: str, is_remote: bool = False) -> bool:
     True if the listing should be kept for an India-only search.
     India signals win first (so 'Mumbai, Maharashtra, India' is never mistaken
     for a US state); then explicit foreign locations are dropped.
+
+    India-only means India — a remote role isn't kept just because it's
+    remote; "Remote" with no country marker is ambiguous (often a foreign
+    team) and is dropped rather than assumed to be India-based.
+    `is_remote` is accepted for API-compatibility with callers that also use
+    it for other things (e.g. location_rank), but no longer grants a pass.
     """
     loc = (location or "").lower().strip()
 
@@ -61,11 +71,8 @@ def is_india_job(location: str, is_remote: bool = False) -> bool:
     if any(f in loc for f in _FOREIGN) or any(s in loc for s in _US_STATES):
         return False
 
-    # Plain "remote" with no country marker, on an India-scoped search → keep
-    if is_remote or loc in ("", "remote", "anywhere"):
-        return True
-
-    # Unknown, no India signal → drop to stay strictly India
+    # Everything else (including bare "Remote"/"Anywhere"/blank with no
+    # country marker) → drop to stay strictly India.
     return False
 
 
