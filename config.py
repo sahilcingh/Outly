@@ -191,6 +191,24 @@ def get_extra_job_keywords() -> list[str]:
     return ["internship", "apprenticeship"]
 
 
+def get_blocked_companies() -> list[str]:
+    """
+    Companies to always exclude from job digests, regardless of match score.
+    Semicolon-separated BLOCKED_COMPANIES env override; case-insensitive
+    substring match against the listing's company name (so "Nexal IIT" also
+    catches "Nexal IIT Pvt Ltd").
+    """
+    raw = os.getenv("BLOCKED_COMPANIES", "").strip()
+    if raw:
+        return [x.strip() for x in raw.split(";") if x.strip()]
+    return ["Rocksync", "Nexal IIT", "Intermo", "Quick Hire", "Your Friendly HR"]
+
+
+def get_block_internships() -> bool:
+    """Whether to hard-exclude internship roles from job digests (default True)."""
+    return os.getenv("BLOCK_INTERNSHIPS", "true").strip().lower() != "false"
+
+
 def get_min_match_score(level: str | None = None) -> int:
     """
     Minimum LLM match score (0-100) for a job to enter the queue. Enforces

@@ -1345,7 +1345,7 @@ def _run_job_search_thread(
     candidate_name: str,
 ) -> None:
     from llm.skills_extractor import extract_skills
-    from tools.job_search import search_jobs, filter_by_geo
+    from tools.job_search import search_jobs, filter_by_geo, filter_intern_roles, filter_by_blocklist
     from llm.job_matcher import score_jobs_parallel
     from llm.cover_letter import generate_cover_letter
 
@@ -1408,6 +1408,12 @@ def _run_job_search_thread(
                 _jobs[job_id]["done"] = True
                 _jobs[job_id]["result"] = {"saved": 0}
             return
+
+        # User preference: no internship roles at all, and never these companies.
+        from config import get_blocked_companies, get_block_internships
+        if get_block_internships():
+            listings, _dropped = filter_intern_roles(listings)
+        listings, _dropped = filter_by_blocklist(listings, get_blocked_companies())
 
         # Drop over-level roles, then filter already-saved (one batched query)
         listings, dropped = filter_by_level(listings, level, strict)

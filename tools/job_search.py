@@ -6,6 +6,7 @@ Falls back gracefully if one site blocks; returns empty list on total failure.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -240,6 +241,36 @@ def filter_by_geo(listings: list[JobListing]) -> tuple[list[JobListing], int]:
     """
     from tools.location import is_india_job
     kept = [l for l in listings if is_india_job(l.location, l.is_remote)]
+    return kept, len(listings) - len(kept)
+
+
+_INTERN_PATTERN = re.compile(r"\b(intern|internship)\b", re.IGNORECASE)
+
+
+def filter_intern_roles(listings: list[JobListing]) -> tuple[list[JobListing], int]:
+    """
+    Hard-exclude internship roles by title, regardless of candidate seniority.
+    Unlike filter_by_level (which only floors internships out once a candidate
+    is mid+), this drops them for everyone per user preference.
+    """
+    kept = [l for l in listings if not _INTERN_PATTERN.search(l.title or "")]
+    return kept, len(listings) - len(kept)
+
+
+def filter_by_blocklist(
+    listings: list[JobListing], blocked_companies: list[str]
+) -> tuple[list[JobListing], int]:
+    """
+    Drop listings from companies on the blocklist. Case-insensitive substring
+    match against the company name.
+    """
+    if not blocked_companies:
+        return listings, 0
+    blocked_lower = [b.lower() for b in blocked_companies]
+    kept = [
+        l for l in listings
+        if not any(b in (l.company or "").lower() for b in blocked_lower)
+    ]
     return kept, len(listings) - len(kept)
 
 

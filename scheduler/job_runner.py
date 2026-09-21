@@ -61,7 +61,7 @@ def run_scheduled_search() -> None:
 
 
 def _search_and_queue(profile: dict, limit: int) -> None:
-    from tools.job_search import search_jobs
+    from tools.job_search import search_jobs, filter_intern_roles, filter_by_blocklist
     from llm.job_matcher import score_jobs_parallel
     from llm.cover_letter import generate_cover_letter
     from storage.jobs import (
@@ -72,6 +72,7 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     from config import (
         get_scheduler_user_id, get_candidate_level, is_seniority_strict,
         get_job_locations, get_job_hours_old, get_job_hours_fresh, get_extra_job_keywords,
+        get_blocked_companies, get_block_internships,
     )
     from tools.seniority import level_from_years, filter_by_level, search_query_for_level
     from tools.location import is_india_job, location_rank
@@ -128,7 +129,11 @@ def _search_and_queue(profile: dict, limit: int) -> None:
         # India only — a remote role isn't kept just because it's remote;
         # a location with no India marker at all is dropped too.
         batch = [l for l in batch if is_india_job(l.location, l.is_remote)]
-        # At/below the candidate's seniority ceiling (keeps internships/apprenticeships)
+        # User preference: no internship roles at all, and never these companies.
+        if get_block_internships():
+            batch, _dropped = filter_intern_roles(batch)
+        batch, _dropped = filter_by_blocklist(batch, get_blocked_companies())
+        # At/below the candidate's seniority ceiling (keeps apprenticeships)
         batch, _dropped = filter_by_level(batch, level, strict)
         # Not already saved
         return [l for l in batch if l.job_url not in existing_urls]
