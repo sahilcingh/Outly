@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 _ACTIONS = (
     "search", "status", "queue", "help",
-    "set_location", "set_min_score", "set_remote",
+    "set_location", "set_min_score", "set_remote", "set_experience",
     "unknown",
 )
 
@@ -34,6 +34,7 @@ Supported actions:
 - "set_location": user wants to change the search location (extract "value": the location as a string, e.g. "Mumbai" or "Bengaluru, India")
 - "set_min_score": user wants to change the minimum match score threshold (extract "value": an integer 0-100)
 - "set_remote": user wants to turn remote-only search on or off (extract "value": true or false)
+- "set_experience": user wants to set/change how many years of experience they have, so jobs asking for more are skipped (extract "value": a number, e.g. 2)
 - "unknown": the message doesn't clearly map to any of the above (small talk, an unrelated question, or too ambiguous to act on)
 
 Return exactly this JSON:

@@ -62,6 +62,7 @@ def run_scheduled_search() -> None:
 
 def _search_and_queue(profile: dict, limit: int) -> None:
     from tools.job_search import search_jobs, filter_intern_roles, filter_by_blocklist
+    from tools.experience import filter_by_experience
     from llm.job_matcher import score_jobs_parallel
     from llm.cover_letter import generate_cover_letter
     from storage.jobs import (
@@ -93,6 +94,10 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     prefs = get_settings(user_id)
     locations = [prefs["location"]] if prefs.get("location") else get_job_locations()
     remote_only_pref = bool(prefs.get("remote_only", False))
+    # /experience override wins over the resume-derived years.
+    candidate_years = prefs.get("experience_years")
+    if candidate_years is None:
+        candidate_years = profile.get("experience_years")
 
     fresh_hours = get_job_hours_fresh()    # tight window, tried first (~couple hrs)
     max_hours = get_job_hours_old()        # widen to this if fresh is empty (cap)
@@ -133,6 +138,9 @@ def _search_and_queue(profile: dict, limit: int) -> None:
         if get_block_internships():
             batch, _dropped = filter_intern_roles(batch)
         batch, _dropped = filter_by_blocklist(batch, get_blocked_companies())
+        # Description states more years than the candidate has — skip it.
+        if candidate_years is not None:
+            batch, _dropped = filter_by_experience(batch, candidate_years)
         # At/below the candidate's seniority ceiling (keeps apprenticeships)
         batch, _dropped = filter_by_level(batch, level, strict)
         # Not already saved

@@ -963,6 +963,8 @@ def _tg_dispatch_command(text: str, chat_id: int) -> None:
         _tg_set_min_score(text[len("/minscore "):].strip())
     elif text.startswith("/remote "):
         _tg_set_remote(text[len("/remote "):].strip())
+    elif text.startswith("/experience "):
+        _tg_set_experience(text[len("/experience "):].strip())
     else:
         _tg_handle_free_text(text, chat_id)
 
@@ -1053,6 +1055,21 @@ def _tg_set_remote(value: str) -> None:
     send_message(f"🏠 Remote-only search turned *{'on' if remote else 'off'}*. Applies from the next search onward.")
 
 
+def _tg_set_experience(value: str) -> None:
+    from tools.telegram_bot import send_message
+    from storage.settings import set_setting
+    try:
+        years = max(0.0, float(value))
+    except ValueError:
+        send_message("Usage: /experience <years> — e.g. /experience 2")
+        return
+    set_setting("experience_years", years, get_scheduler_user_id())
+    send_message(
+        f"🧮 Experience set to *{years:g} years*. Jobs asking for more than that in the "
+        f"description will be skipped from the next search onward."
+    )
+
+
 def _tg_handle_free_text(text: str, chat_id: int) -> None:
     """Free text that isn't an exact command — classify intent via Groq and
     dispatch to the same handlers the exact commands use."""
@@ -1078,6 +1095,8 @@ def _tg_handle_free_text(text: str, chat_id: int) -> None:
         _tg_set_min_score(str(value))
     elif action == "set_remote" and value is not None:
         _tg_set_remote("on" if value in (True, "true", "on", "yes") else "off")
+    elif action == "set_experience" and value is not None:
+        _tg_set_experience(str(value))
     else:
         send_message("I didn't recognize that. Send /help for commands, "
                      "/queue for your jobs PDF, or attach a resume PDF to update your profile.")
@@ -1309,6 +1328,7 @@ def _tg_help(chat_id: int) -> None:
         "/location <place> — Change search location, e.g. `/location Mumbai`\n"
         "/minscore <0-100> — Change the minimum match score\n"
         "/remote on|off — Restrict search to remote-only roles\n"
+        "/experience <years> — Skip jobs that ask for more experience than this\n"
         "/help — Show this message\n\n"
         "You can also just type naturally — e.g. \"search now\" or \"only show me 70+ matches\" "
         "— I'll figure out what you mean.\n\n"
@@ -1414,6 +1434,15 @@ def _run_job_search_thread(
         if get_block_internships():
             listings, _dropped = filter_intern_roles(listings)
         listings, _dropped = filter_by_blocklist(listings, get_blocked_companies())
+
+        # Description states more years than the candidate has — skip it.
+        from storage.settings import get_settings as _get_settings
+        from tools.experience import filter_by_experience
+        candidate_years = _get_settings(user_id).get("experience_years") if user_id else None
+        if candidate_years is None:
+            candidate_years = profile.get("experience_years")
+        if candidate_years is not None:
+            listings, _dropped = filter_by_experience(listings, candidate_years)
 
         # Drop over-level roles, then filter already-saved (one batched query)
         listings, dropped = filter_by_level(listings, level, strict)

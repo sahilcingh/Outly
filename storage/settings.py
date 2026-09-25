@@ -27,7 +27,7 @@ if _USE_POSTGRES:
     _PG_DSN = _DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # Keys a user is allowed to override, and how to coerce/validate each.
-_ALLOWED_KEYS = ("location", "min_score", "remote_only")
+_ALLOWED_KEYS = ("location", "min_score", "remote_only", "experience_years")
 
 
 @contextmanager
