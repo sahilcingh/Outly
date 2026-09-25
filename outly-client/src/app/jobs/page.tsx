@@ -3,6 +3,9 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { API_BASE_URL } from "../config";
+import { Reveal, StaggerList, StaggerItem, PopIn, AnimatePresence } from "../motion-primitives";
+import { Spinner } from "@/components/ui/spinner";
+import { AnimatedNumber } from "@/components/ui/animated-number";
 
 type EventItem = { step: string; label: string; detail: string };
 
@@ -110,7 +113,7 @@ export default function JobsPage() {
             setResultBanner({ type: "success", text: `Done! ${saved} jobs added to your review queue.` });
             fetchQueue(filter);
           } else if (typeof saved === "number") {
-            setResultBanner({ type: "success", text: "No new jobs to add — everything found is already in your queue." });
+            setResultBanner({ type: "success", text: "No new jobs to add. Everything found is already in your queue." });
           } else {
             setResultBanner({ type: "error", text: data.error || "Something went wrong." });
           }
@@ -186,14 +189,14 @@ export default function JobsPage() {
   };
 
   return (
-    <div className="animate-fade-in">
-      <div className="mb-6">
+    <div>
+      <Reveal className="mb-6">
         <h1 className="text-hero" style={{ fontSize: "2.5rem", marginBottom: "0.5rem" }}>Automated Job Search</h1>
-        <p className="text-subhero">Upload your resume — Outly searches LinkedIn, Indeed, Naukri, Glassdoor &amp; Google, scores matches, and writes tailored cover letters.</p>
-      </div>
+        <p className="text-subhero">Upload your resume, and Outly searches LinkedIn, Indeed, Naukri, Glassdoor &amp; Google, scores matches, and writes tailored cover letters.</p>
+      </Reveal>
 
       <div className="flex gap-6 flex-wrap lg:flex-nowrap items-start">
-        <div className="w-full" style={{ maxWidth: "500px" }}>
+        <Reveal delay={0.1} className="w-full" style={{ maxWidth: "500px" }}>
           <form className="card-light flex flex-col gap-4" onSubmit={handleSubmit} style={{ padding: "2rem" }}>
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium">Your Resume</label>
@@ -213,7 +216,7 @@ export default function JobsPage() {
                 />
                 {resumeFile ? resumeFile.name : "Click to upload a PDF resume"}
               </label>
-              <div className="text-xs text-muted text-center">— or paste your resume below —</div>
+              <div className="text-xs text-muted text-center">or paste your resume below</div>
               <textarea
                 className="input"
                 placeholder="Paste your resume text here..."
@@ -248,7 +251,7 @@ export default function JobsPage() {
                 type="text" className="input" placeholder="India, Bengaluru, Remote (India), etc."
                 value={location} onChange={(e) => setLocation(e.target.value)} disabled={loading}
               />
-              <div className="text-xs text-muted">Only India-based roles are kept — remote roles for teams outside India are filtered out too.</div>
+              <div className="text-xs text-muted">Only India-based roles are kept. Remote roles for teams outside India are filtered out too.</div>
             </div>
 
             <div className="flex flex-col gap-2">
@@ -272,25 +275,28 @@ export default function JobsPage() {
               {loading ? "Searching..." : "Find Jobs"}
             </button>
 
+            <AnimatePresence>
             {error && (
-              <div className="p-3 rounded-md text-sm" style={{ backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", color: "var(--error)" }}>
+              <PopIn className="p-3 rounded-md text-sm" style={{ backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", color: "var(--error)" }}>
                 {error}
-              </div>
+              </PopIn>
             )}
+            </AnimatePresence>
 
             {loading && events.length > 0 && (
               <div className="flex flex-col gap-1" style={{ marginTop: "0.5rem" }}>
                 {events.map((ev, i) => (
                   <div key={i} className="text-xs text-muted flex gap-2">
                     <span>{ev.label}</span>
-                    {ev.detail && <span style={{ opacity: 0.7 }}>— {ev.detail}</span>}
+                    {ev.detail && <span style={{ opacity: 0.7 }}>· {ev.detail}</span>}
                   </div>
                 ))}
               </div>
             )}
 
+            <AnimatePresence>
             {resultBanner && (
-              <div
+              <PopIn
                 className="p-3 rounded-md text-sm"
                 style={
                   resultBanner.type === "success"
@@ -299,12 +305,13 @@ export default function JobsPage() {
                 }
               >
                 {resultBanner.text}
-              </div>
+              </PopIn>
             )}
+            </AnimatePresence>
           </form>
-        </div>
+        </Reveal>
 
-        <div className="flex-1 w-full">
+        <Reveal delay={0.2} className="flex-1 w-full">
           <div className="card-light flex flex-col gap-4" style={{ minHeight: "400px" }}>
             <div className="flex justify-between items-center flex-wrap gap-2 border-b border-[var(--border-color)] pb-4">
               <h2 className="text-h3">Job Queue</h2>
@@ -324,7 +331,7 @@ export default function JobsPage() {
 
             {queueLoading ? (
               <div className="flex justify-center" style={{ minHeight: "200px", alignItems: "center" }}>
-                <div className="pulse" style={{ width: "20px", height: "20px", borderRadius: "50%", backgroundColor: "var(--accent-blue)" }}></div>
+                <Spinner className="size-6 text-[var(--accent-blue)]" />
               </div>
             ) : jobs.length === 0 ? (
               <div className="flex flex-col items-center justify-center text-center opacity-50" style={{ minHeight: "200px" }}>
@@ -334,19 +341,20 @@ export default function JobsPage() {
                 </p>
               </div>
             ) : (
-              <div className="flex flex-col gap-3">
+              <StaggerList className="flex flex-col gap-3">
+                <AnimatePresence>
                 {jobs.map((job) => {
                   const matches = parseListField(job.key_matches).slice(0, 3);
                   const gaps = parseListField(job.gaps).slice(0, 2);
                   return (
-                    <div key={job.id} className="flex flex-col gap-2 p-4 rounded-md" style={{ border: "1px solid var(--border-color)" }}>
+                    <StaggerItem key={job.id} className="card-hover flex flex-col gap-2 p-4 rounded-md" style={{ border: "1px solid var(--border-color)" }}>
                       <div className="flex justify-between items-start gap-3">
                         <div>
                           <div className="text-sm font-medium">{job.job_title}</div>
                           <div className="text-xs text-muted">{job.company_name}</div>
                         </div>
                         <span className={`badge ${scoreClass(job.match_score)}`} style={{ flexShrink: 0 }}>
-                          {job.match_score}%
+                          <AnimatedNumber value={job.match_score} />%
                         </span>
                       </div>
 
@@ -385,13 +393,14 @@ export default function JobsPage() {
                           </>
                         )}
                       </div>
-                    </div>
+                    </StaggerItem>
                   );
                 })}
-              </div>
+                </AnimatePresence>
+              </StaggerList>
             )}
           </div>
-        </div>
+        </Reveal>
       </div>
     </div>
   );

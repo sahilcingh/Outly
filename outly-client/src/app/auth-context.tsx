@@ -8,6 +8,9 @@ type AuthState = { email: string | null; ready: boolean };
 
 const AuthContext = createContext<AuthState>({ email: null, ready: false });
 
+/** Routes anyone can see signed out: the landing page and the sign-in form. */
+const PUBLIC_ROUTES = new Set(["/", "/login"]);
+
 export function useAuth() {
   return useContext(AuthContext);
 }
@@ -28,7 +31,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch(() => {
         if (cancelled) return;
         setState({ email: null, ready: true });
-        if (pathname !== "/login") {
+        if (!PUBLIC_ROUTES.has(pathname)) {
           router.replace(`/login?next=${encodeURIComponent(pathname)}`);
         }
       });
@@ -37,9 +40,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [pathname, router]);
 
-  // Gate protected pages until we know auth state (or once we know it's missing —
-  // the redirect above is already in flight).
-  if (pathname !== "/login" && (!state.ready || !state.email)) {
+  // Gate protected pages until we know auth state (or once we know it's missing,
+  // since the redirect above is already in flight).
+  if (!PUBLIC_ROUTES.has(pathname) && (!state.ready || !state.email)) {
     return null;
   }
 

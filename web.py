@@ -609,6 +609,38 @@ async def batch_upload(request: Request, file: UploadFile = File(...)):
         )
 
 
+@app.post("/api/v1/batch")
+async def api_batch_upload(request: Request, file: UploadFile = File(...)):
+    """JSON version of /batch for the Next.js frontend — same session auth."""
+    if not _is_authenticated(request):
+        return _api_error("Unauthorized", 401)
+    try:
+        content = await file.read()
+        text = content.decode("utf-8")
+        reader = csv.DictReader(io.StringIO(text))
+        rows = list(reader)
+
+        if not rows:
+            return _api_error("CSV file is empty or has no valid rows.", 400)
+
+        user_id = _current_user_id(request)
+        processed = 0
+        for row in rows:
+            company = (row.get("company_name") or row.get("company") or "").strip()
+            if not company:
+                continue
+            industry = (row.get("industry") or "").strip() or None
+            job_title = (row.get("job_title") or "").strip() or None
+            run_pipeline(company, run_drafter=True, run_sequence=False,
+                         industry=industry, job_title=job_title, user_id=user_id)
+            processed += 1
+
+        return JSONResponse({"success": True, "processed": processed})
+    except Exception as e:
+        log.exception("Batch upload error")
+        return _api_error(str(e), 500)
+
+
 # ---------------------------------------------------------------------------
 # Drafts review UI
 # ---------------------------------------------------------------------------
@@ -697,6 +729,33 @@ async def revoke_key(request: Request, key_id: int):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     revoke_api_key(key_id, _current_user_id(request))
     return RedirectResponse(url="/settings/api-keys", status_code=303)
+
+
+@app.get("/api/v1/api-keys")
+async def api_list_keys(request: Request):
+    """JSON key list for the Next.js frontend — session auth only (not for external API use)."""
+    if not _is_authenticated(request):
+        return _api_error("Unauthorized", 401)
+    keys = list_api_keys(_current_user_id(request))
+    return JSONResponse({"success": True, "keys": [dataclasses.asdict(k) for k in keys]})
+
+
+@app.post("/api/v1/api-keys")
+async def api_create_key(request: Request, key_name: str = Form(...)):
+    if not _is_authenticated(request):
+        return _api_error("Unauthorized", 401)
+    user_id = _current_user_id(request)
+    full_key, _ = create_api_key(user_id, key_name.strip() or "My API Key")
+    keys = list_api_keys(user_id)
+    return JSONResponse({"success": True, "key": full_key, "keys": [dataclasses.asdict(k) for k in keys]})
+
+
+@app.post("/api/v1/api-keys/{key_id}/revoke")
+async def api_revoke_key(request: Request, key_id: int):
+    if not _is_authenticated(request):
+        return _api_error("Unauthorized", 401)
+    revoke_api_key(key_id, _current_user_id(request))
+    return JSONResponse({"success": True})
 
 
 # ---------------------------------------------------------------------------

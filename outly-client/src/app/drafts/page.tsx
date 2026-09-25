@@ -2,6 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { API_BASE_URL } from "../config";
+import { Reveal, StaggerList, StaggerItem, AnimatePresence } from "../motion-primitives";
+import { Spinner } from "@/components/ui/spinner";
+import { ExternalLink } from "@/components/ui/external-link";
 
 type Draft = {
   id: number;
@@ -52,13 +55,13 @@ export default function DraftsPage() {
   };
 
   return (
-    <div className="animate-fade-in">
-      <div className="flex justify-between items-center mb-6">
+    <div>
+      <Reveal className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-hero" style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>Review Drafts</h1>
           <p className="text-subhero">Manage your AI-generated email drafts before sending.</p>
         </div>
-        
+
         <div className="flex gap-2">
           {['all', 'draft', 'approved', 'sent', 'rejected'].map(status => (
             <button
@@ -71,11 +74,11 @@ export default function DraftsPage() {
             </button>
           ))}
         </div>
-      </div>
+      </Reveal>
 
       {loading ? (
         <div className="flex justify-center mt-12">
-          <div className="pulse" style={{ width: '20px', height: '20px', borderRadius: '50%', backgroundColor: 'var(--accent-blue)' }}></div>
+          <Spinner className="size-6 text-[var(--accent-blue)]" />
         </div>
       ) : drafts.length === 0 ? (
         <div className="card-light h-full flex flex-col items-center justify-center text-center opacity-50 mt-8" style={{ minHeight: '300px', borderStyle: 'dashed' }}>
@@ -87,9 +90,10 @@ export default function DraftsPage() {
           <p className="text-muted">No drafts matching status "{filter}".</p>
         </div>
       ) : (
-        <div className="flex flex-col gap-6">
+        <StaggerList className="flex flex-col gap-6">
+          <AnimatePresence>
           {drafts.map(draft => (
-            <div key={draft.id} className="card-light flex flex-col gap-4">
+            <StaggerItem key={draft.id} className="card-light card-hover flex flex-col gap-4">
               <div className="flex justify-between items-start border-b border-[var(--border-color)] pb-4">
                 <div>
                   <div className="flex items-center gap-3 mb-1">
@@ -103,9 +107,9 @@ export default function DraftsPage() {
                     </span>
                   </div>
                   {draft.company_url && (
-                    <a href={draft.company_url} target="_blank" rel="noopener noreferrer" className="text-sm text-[var(--accent-blue)] hover:underline">
+                    <ExternalLink href={draft.company_url} className="text-[var(--accent-blue)]">
                       {draft.company_url}
-                    </a>
+                    </ExternalLink>
                   )}
                   <div className="text-xs text-muted mt-2">Generated: {new Date(draft.created_at).toLocaleString()}</div>
                 </div>
@@ -140,9 +144,10 @@ export default function DraftsPage() {
                   {draft.body}
                 </div>
               </div>
-            </div>
+            </StaggerItem>
           ))}
-        </div>
+          </AnimatePresence>
+        </StaggerList>
       )}
     </div>
   );

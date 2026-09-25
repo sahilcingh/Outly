@@ -4,6 +4,13 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_BASE_URL } from "../../config";
+import { Reveal, PopIn, AnimatePresence } from "../../motion-primitives";
+import { Spinner } from "@/components/ui/spinner";
+import { AnimatedNumber } from "@/components/ui/animated-number";
+import { ExternalLink } from "@/components/ui/external-link";
+import { BorderBeam } from "@/components/ui/border-beam";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/skiper-ui/skiper101";
+import { ProgressiveBlur } from "@/components/ui/skiper-ui/skiper41";
 
 type Job = {
   id: number;
@@ -114,7 +121,7 @@ export default function JobDetailPage() {
       if (url.searchParams.get("applied") === "1") {
         setActionMsg({ type: "success", text: `✅ Application email sent successfully!` });
       } else if (url.searchParams.get("applied") === "0") {
-        setActionMsg({ type: "info", text: "⚠️ Email send failed — send it manually using the subject and cover letter below." });
+        setActionMsg({ type: "info", text: "⚠️ Email send failed. Send it manually using the subject and cover letter below." });
       } else if (url.searchParams.get("ats") === "1") {
         setActionMsg({ type: "info", text: '✅ Approved! Open the job link below, paste your cover letter, and click Apply. Then click "Mark Applied".' });
       }
@@ -137,7 +144,7 @@ export default function JobDetailPage() {
   if (loading) {
     return (
       <div className="flex justify-center mt-12">
-        <div className="pulse" style={{ width: "20px", height: "20px", borderRadius: "50%", backgroundColor: "var(--accent-blue)" }}></div>
+        <Spinner className="size-6 text-[var(--accent-blue)]" />
       </div>
     );
   }
@@ -155,13 +162,14 @@ export default function JobDetailPage() {
   const gaps = parseListField(job.gaps);
 
   return (
-    <div className="animate-fade-in flex flex-col gap-4">
+    <div className="flex flex-col gap-4">
       <div className="flex gap-4">
         <Link href="/jobs" className="text-sm text-[var(--accent-blue)] hover:underline">← Job Queue</Link>
       </div>
 
+      <AnimatePresence>
       {actionMsg && (
-        <div
+        <PopIn
           className="p-3 rounded-md text-sm"
           style={
             actionMsg.type === "success"
@@ -170,10 +178,11 @@ export default function JobDetailPage() {
           }
         >
           {actionMsg.text}
-        </div>
+        </PopIn>
       )}
+      </AnimatePresence>
 
-      <div className="card-light flex justify-between items-start gap-4 flex-wrap">
+      <Reveal className="card-light flex justify-between items-start gap-4 flex-wrap">
         <div>
           <h1 className="text-h3" style={{ fontSize: "1.5rem" }}>{job.job_title}</h1>
           {job.company_url ? (
@@ -190,12 +199,17 @@ export default function JobDetailPage() {
             {job.date_posted && <span className="text-muted">Posted: {job.date_posted}</span>}
           </div>
         </div>
-        <span className={`badge ${scoreClass(job.match_score)}`} style={{ fontSize: "1.1rem", padding: "0.5rem 0.9rem" }}>
-          {job.match_score}%
-        </span>
-      </div>
+        <Tooltip>
+          <TooltipTrigger>
+            <span className={`badge ${scoreClass(job.match_score)}`} style={{ fontSize: "1.1rem", padding: "0.5rem 0.9rem" }}>
+              <AnimatedNumber value={job.match_score} />%
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>AI-matched relevance score against your resume</TooltipContent>
+        </Tooltip>
+      </Reveal>
 
-      <div className="card-light">
+      <Reveal delay={0.05} className="card-light">
         <h2 className="text-h3 border-b border-[var(--border-color)] pb-3 mb-3">Match Analysis</h2>
         <p className="text-sm" style={{ color: "var(--text-secondary)" }}>{job.match_rationale}</p>
         {matches.length > 0 && (
@@ -214,20 +228,21 @@ export default function JobDetailPage() {
             </div>
           </>
         )}
-      </div>
+      </Reveal>
 
-      <div className="card-light">
+      <Reveal delay={0.1} className="card-light">
         <h2 className="text-h3 border-b border-[var(--border-color)] pb-3 mb-3">How to Apply</h2>
         {job.apply_method === "email" && job.contact_email ? (
           <div className="text-sm">Send email to: <a href={`mailto:${job.contact_email}`} className="text-[var(--accent-blue)]">{job.contact_email}</a></div>
         ) : job.ats_url ? (
-          <div className="text-sm">Apply via ATS: <a href={job.ats_url} target="_blank" rel="noopener noreferrer" className="text-[var(--accent-blue)]">{job.ats_url}</a></div>
+          <div className="text-sm">Apply via ATS: <ExternalLink href={job.ats_url} className="text-[var(--accent-blue)]">{job.ats_url}</ExternalLink></div>
         ) : (
-          <div className="text-sm">Job listing: <a href={job.job_url} target="_blank" rel="noopener noreferrer" className="text-[var(--accent-blue)]">{job.job_url}</a></div>
+          <div className="text-sm">Job listing: <ExternalLink href={job.job_url} className="text-[var(--accent-blue)]">{job.job_url}</ExternalLink></div>
         )}
-      </div>
+      </Reveal>
 
-      <div className="card-light flex flex-col gap-3">
+      <Reveal delay={0.15} className="card-light flex flex-col gap-3" style={{ position: "relative", overflow: "hidden" }}>
+        <BorderBeam colorFrom="var(--accent-blue)" colorTo="var(--success)" size={150} duration={8} />
         <div className="flex justify-between items-center border-b border-[var(--border-color)] pb-3">
           <h2 className="text-h3">Cover Letter</h2>
           <button onClick={handleGenerate} className="btn btn-secondary text-xs px-3 py-1" disabled={generating}>
@@ -276,10 +291,10 @@ export default function JobDetailPage() {
             {job.status === "applied" && <span style={{ color: "var(--success)", fontWeight: 600 }}>🎉 Applied!</span>}
           </div>
         </div>
-      </div>
+      </Reveal>
 
       {job.job_description && (
-        <div className="card-light">
+        <Reveal delay={0.2} className="card-light">
           <div className="flex justify-between items-center border-b border-[var(--border-color)] pb-3 mb-3">
             <h2 className="text-h3">Job Description</h2>
             <button
@@ -290,16 +305,21 @@ export default function JobDetailPage() {
               {descExpanded ? "Show less" : "Show more"}
             </button>
           </div>
-          <div
-            className="text-sm"
-            style={{
-              color: "var(--text-secondary)", whiteSpace: "pre-wrap",
-              maxHeight: descExpanded ? "none" : "200px", overflow: "hidden",
-            }}
-          >
-            {job.job_description}
+          <div style={{ position: "relative" }}>
+            <div
+              className="text-sm"
+              style={{
+                color: "var(--text-secondary)", whiteSpace: "pre-wrap",
+                maxHeight: descExpanded ? "none" : "200px", overflow: "hidden",
+              }}
+            >
+              {job.job_description}
+            </div>
+            {!descExpanded && (
+              <ProgressiveBlur position="bottom" backgroundColor="var(--bg-card)" height="70px" blurAmount="2px" />
+            )}
           </div>
-        </div>
+        </Reveal>
       )}
     </div>
   );

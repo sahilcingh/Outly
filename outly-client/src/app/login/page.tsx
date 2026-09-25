@@ -2,7 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { API_BASE_URL } from "../config";
+import { Reveal, PopIn, AnimatePresence } from "../motion-primitives";
+import { OutlyMark } from "@/components/outly-mark";
 
 export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -11,12 +14,12 @@ export default function LoginPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [next, setNext] = useState("/");
+  const [next, setNext] = useState("/prospecting");
   const router = useRouter();
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setNext(params.get("next") || "/");
+    setNext(params.get("next") || "/prospecting");
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -49,7 +52,18 @@ export default function LoginPage() {
 
   return (
     <div className="flex justify-center" style={{ marginTop: "4rem" }}>
-      <div className="card-light flex flex-col gap-4" style={{ maxWidth: "400px", width: "100%", padding: "2rem" }}>
+      <Reveal className="card-light flex flex-col gap-4" style={{ maxWidth: "400px", width: "100%", padding: "2rem" }}>
+        <Link
+          href="/"
+          className="flex items-center gap-2"
+          style={{ textDecoration: "none", color: "inherit", width: "fit-content", marginBottom: "0.5rem" }}
+        >
+          <OutlyMark size={28} />
+          <span style={{ fontSize: "0.8rem", fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase" }}>
+            Outly
+          </span>
+        </Link>
+
         <h1 className="text-hero" style={{ fontSize: "1.75rem", marginBottom: "0.25rem" }}>
           {mode === "login" ? "Sign in" : "Create account"}
         </h1>
@@ -100,14 +114,16 @@ export default function LoginPage() {
             {loading ? "Please wait..." : mode === "login" ? "Sign in" : "Create account"}
           </button>
 
-          {error && (
-            <div
-              className="p-3 rounded-md text-sm"
-              style={{ backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", color: "var(--error)" }}
-            >
-              {error}
-            </div>
-          )}
+          <AnimatePresence>
+            {error && (
+              <PopIn
+                className="p-3 rounded-md text-sm"
+                style={{ backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", color: "var(--error)" }}
+              >
+                {error}
+              </PopIn>
+            )}
+          </AnimatePresence>
         </form>
 
         <button
@@ -121,7 +137,7 @@ export default function LoginPage() {
         >
           {mode === "login" ? "Need an account? Register" : "Already have an account? Sign in"}
         </button>
-      </div>
+      </Reveal>
     </div>
   );
 }

@@ -1,4 +1,8 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
 
 :root {
   /* Color Palette */
@@ -6,31 +10,168 @@
   --bg-card: #ffffff; /* Stark white cards */
   --bg-dark: #121212; /* Almost black for dark cards */
   --bg-dark-inner: #1f1f1f; /* Inner card on dark mode */
-  
+
   --text-primary: #121212;
   --text-secondary: #666666;
   --text-muted: #999999;
   --text-light: #ffffff;
-  
+
   --accent-blue: #3b82f6; /* Bright blue for accents (01 / TARGET) */
   --accent-blue-hover: #2563eb;
-  
+
   --border-color: #e5e5e5;
   --border-dark: #333333;
-  
+
   /* Radii */
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-full: 9999px;
-  
+
   /* Shadows */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.03);
-  
+
   --success: #10b981;
   --error: #ef4444;
   --warning: #f59e0b;
+
+  /* The inverted pair: solid buttons and the brand tile, always the opposite
+     of the page so they read as the primary action in either theme. */
+  --invert-bg: #121212;
+  --invert-fg: #ffffff;
+
+  /* Surfaces that stay dark in both themes (terminals, code blocks, the
+     signal band). They only shift enough to stay raised off the page. */
+  --dark-bar: #171717;
+  --dark-border: #262626;
+  --dark-border-soft: #2e2e2e;
+  --dark-row: #242424;
+
+  /* Alpha-dependent furniture that cannot simply reuse a solid token. */
+  --bg-blur: rgba(245, 245, 240, 0.72);
+  --grid-line: rgba(18, 18, 18, 0.05);
+  --chip-bg: rgba(255, 255, 255, 0.72);
+  --surface-raised: #ffffff;
+  --badge-neutral-bg: rgba(0, 0, 0, 0.05);
+
+  /* shadcn/ui + Skiper UI + Vengeance UI expect this token set.
+     Mapped onto our existing brand palette above instead of the
+     library defaults, so pulled components inherit our look. */
+  --background: var(--bg-main);
+  --foreground: var(--text-primary);
+  --card: var(--bg-card);
+  --card-foreground: var(--text-primary);
+  --popover: var(--bg-card);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--invert-bg);
+  --primary-foreground: var(--invert-fg);
+  --secondary: var(--bg-main);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--border-color);
+  --muted-foreground: var(--text-secondary);
+  --accent: var(--accent-blue);
+  --accent-foreground: var(--text-light);
+  --destructive: var(--error);
+  --destructive-foreground: var(--text-light);
+  --border: var(--border-color);
+  --input: var(--border-color);
+  --ring: var(--accent-blue);
+  --radius: var(--radius-md);
+  --chart-1: var(--accent-blue);
+  --chart-2: var(--success);
+  --chart-3: var(--warning);
+  --chart-4: var(--error);
+  --chart-5: var(--text-secondary);
+  --sidebar: var(--bg-card);
+  --sidebar-foreground: var(--text-primary);
+  --sidebar-primary: var(--invert-bg);
+  --sidebar-primary-foreground: var(--invert-fg);
+  --sidebar-accent: var(--border-color);
+  --sidebar-accent-foreground: var(--text-primary);
+  --sidebar-border: var(--border-color);
+  --sidebar-ring: var(--accent-blue);
+}
+
+/* Dark theme. Every shadcn/Skiper token above is defined in terms of the brand
+   palette, so flipping the brand palette here is enough: the rest re-resolves
+   on its own. Set by ThemeToggle and by THEME_SCRIPT in layout.tsx. */
+.dark {
+  --bg-main: #0c0c0e;
+  --bg-card: #141417;
+  --bg-dark: #17171a;
+  --bg-dark-inner: #1e1e22;
+
+  --text-primary: #f2f2f0;
+  --text-secondary: #a0a0a8;
+  --text-muted: #70707a;
+
+  --border-color: #26262b;
+  --border-dark: #33333a;
+
+  --accent-blue: #5b9cff;
+  --accent-blue-hover: #7eb2ff;
+
+  --invert-bg: #f2f2f0;
+  --invert-fg: #121212;
+
+  --dark-bar: #1c1c20;
+  --dark-border: #2c2c33;
+  --dark-border-soft: #33333a;
+  --dark-row: #26262c;
+
+  --bg-blur: rgba(12, 12, 14, 0.72);
+  --grid-line: rgba(255, 255, 255, 0.055);
+  --chip-bg: rgba(255, 255, 255, 0.05);
+  --surface-raised: #1a1a1d;
+  --badge-neutral-bg: rgba(255, 255, 255, 0.07);
+
+  --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.34);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+  --font-heading: var(--font-inter);
+  --font-sans: var(--font-inter);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
 * {
@@ -42,7 +183,7 @@
 body {
   background-color: var(--bg-main);
   color: var(--text-primary);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, sans-serif;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -74,8 +215,8 @@ body {
 }
 
 .brand-icon {
-  background-color: var(--text-primary);
-  color: var(--text-light);
+  background-color: var(--invert-bg);
+  color: var(--invert-fg);
   width: 24px;
   height: 24px;
   display: flex;
@@ -92,13 +233,32 @@ body {
 }
 
 .nav-link {
+  position: relative;
   color: var(--text-secondary);
   text-decoration: none;
   transition: color 0.2s;
+  padding-bottom: 3px;
 }
 
 .nav-link:hover {
   color: var(--text-primary);
+}
+
+.nav-link::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -2px;
+  height: 2px;
+  width: 100%;
+  background-color: var(--accent-blue);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.nav-link:hover::after {
+  transform: scaleX(1);
 }
 
 .nav-status {
@@ -160,18 +320,31 @@ body {
   font-weight: 600;
   font-size: 0.875rem;
   cursor: pointer;
-  transition: opacity 0.2s, background-color 0.2s;
+  transition: opacity 0.2s, background-color 0.2s, transform 0.15s ease, box-shadow 0.2s ease;
   border: none;
   outline: none;
 }
 
-.btn-primary {
-  background-color: var(--text-primary);
-  color: var(--text-light);
+.btn:hover:not(:disabled) {
+  transform: translateY(-1px);
 }
 
-.btn-primary:hover {
+.btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.96);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background-color: var(--invert-bg);
+  color: var(--invert-fg);
+}
+
+.btn-primary:hover:not(:disabled) {
   opacity: 0.9;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
 }
 
 .btn-secondary {
@@ -180,7 +353,7 @@ body {
   border: 1px solid var(--text-primary);
 }
 
-.btn-secondary:hover {
+.btn-secondary:hover:not(:disabled) {
   background-color: var(--border-color);
 }
 
@@ -223,8 +396,8 @@ body {
   right: 0.5rem;
   top: 50%;
   transform: translateY(-50%);
-  background-color: var(--text-primary);
-  color: var(--text-light);
+  background-color: var(--invert-bg);
+  color: var(--invert-fg);
   border: none;
   padding: 0.6rem 1.25rem;
   border-radius: var(--radius-sm);
@@ -255,6 +428,14 @@ body {
   padding: 2rem;
   margin-bottom: 1.5rem;
   box-shadow: var(--shadow-card);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+/* Opt-in lift for cards that represent a single list entry (job/draft rows) */
+.card-hover:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  border-color: var(--accent-blue);
 }
 
 .card-dark {
@@ -387,6 +568,22 @@ body {
   color: var(--text-primary);
   font-family: inherit;
   font-size: 0.875rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out;
 }
 
 @keyframes pulse {
@@ -415,6 +612,39 @@ body {
   color: #dddddd;
 }
 
+/* Theme toggle. Which icon shows is driven purely by the `dark` class on
+   <html>, so the button needs no React state and never flashes the wrong one. */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background-color: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.2s ease, border-color 0.2s ease, background-color 0.2s ease,
+    transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.theme-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--text-primary);
+  transform: translateY(-1px);
+}
+
+.theme-toggle:active {
+  transform: translateY(0) scale(0.94);
+}
+
+.theme-toggle .icon-sun { display: none; }
+.theme-toggle .icon-moon { display: block; }
+.dark .theme-toggle .icon-sun { display: block; }
+.dark .theme-toggle .icon-moon { display: none; }
+
 /* Badges */
 .badge {
   display: inline-flex;
@@ -430,7 +660,7 @@ body {
 .badge-success { background: rgba(16, 185, 129, 0.15); color: var(--success); }
 .badge-warning { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
 .badge-error { background: rgba(239, 68, 68, 0.15); color: var(--error); }
-.badge-neutral { background: rgba(0, 0, 0, 0.05); color: var(--text-secondary); }
+.badge-neutral { background: var(--badge-neutral-bg); color: var(--text-secondary); }
 
 /* Other utils needed for drafts/jobs */
 .text-h1 { font-size: 2.25rem; font-weight: 700; letter-spacing: -0.02em; }
@@ -440,3 +670,15 @@ body {
 .text-xs { font-size: 0.75rem; }
 .pb-4 { padding-bottom: 1rem; }
 .border-b { border-bottom: 1px solid var(--border-color); }
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}

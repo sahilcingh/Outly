@@ -98,7 +98,7 @@
                 <input type="text" name="industry" placeholder="e.g. Fintech SaaS">
             </div>
             <div class="form-group">
-                <label>Role to Offer <span style="font-weight:400;color:#9ca3af;">(Optional — auto-detected)</span></label>
+                <label>Role to Offer <span style="font-weight:400;color:#9ca3af;">(Optional, auto-detected)</span></label>
                 <input type="text" name="job_title" placeholder="e.g. Senior ML Engineer">
             </div>
             <button type="submit" id="submit-btn">Generate Draft</button>
@@ -159,7 +159,7 @@
                 : '';
 
             const contactLine = result.contact_name
-                ? `${result.contact_name}${result.contact_title ? ' — ' + result.contact_title : ''}`
+                ? `${result.contact_name}${result.contact_title ? ', ' + result.contact_title : ''}`
                 : result.contact_title || 'Not found on website';
             const emailLine = result.contact_email
                 ? `<div style="font-size:0.78rem;color:#059669;margin-top:2px;">${result.contact_email}</div>` : '';
@@ -177,7 +177,7 @@
                     <div class="chips">
                         <div class="chip chip-role">
                             <div class="chip-label">Role Being Offered</div>
-                            <div class="chip-value">${escHtml(result.role_to_offer || '—')}</div>
+                            <div class="chip-value">${escHtml(result.role_to_offer || 'N/A')}</div>
                         </div>
                         <div class="chip chip-contact">
                             <div class="chip-label">Email Recipient</div>
