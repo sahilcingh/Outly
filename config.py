@@ -201,7 +201,7 @@ def get_blocked_companies() -> list[str]:
     raw = os.getenv("BLOCKED_COMPANIES", "").strip()
     if raw:
         return [x.strip() for x in raw.split(";") if x.strip()]
-    return ["Rocksync", "Nexal IIT", "Intermo", "Quick Hire", "Your Friendly HR"]
+    return ["Rocksync", "Nexal IIT", "Internmo", "Quick Hire", "Your Friendly HR"]
 
 
 def get_block_internships() -> bool:
