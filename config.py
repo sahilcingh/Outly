@@ -124,7 +124,10 @@ def get_render_url() -> str | None:
 
 def get_scheduler_user_id() -> int:
     """user_id used for scheduler-initiated job searches. Defaults to 1."""
-    return int(os.getenv("SCHEDULER_USER_ID", "1"))
+    try:
+        return int(os.getenv("SCHEDULER_USER_ID", "1"))
+    except ValueError:
+        return 1
 
 
 def get_cron_secret() -> str | None:
