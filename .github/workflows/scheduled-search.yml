@@ -1,0 +1,46 @@
+name: Scheduled job search
+
+# Runs the job search + Telegram digest directly on GitHub's runners instead
+# of pinging the Render backend — Render's free tier hibernates and its
+# wake-up is unreliable (confirmed: even a keep-alive ping failed), so the
+# search needs to run somewhere that doesn't depend on waking anything up.
+# Talks straight to Postgres/Groq/Telegram, same as the Render backend does.
+on:
+  schedule:
+    - cron: "0 4 * * 1-5"  # 9:30 AM IST, Mon-Fri
+    - cron: "0 9 * * 1-5"  # 2:30 PM IST, Mon-Fri
+  workflow_dispatch: {}      # lets you trigger it manually from the Actions tab
+
+jobs:
+  run-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GROQ_MODEL: ${{ secrets.GROQ_MODEL }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      SCHEDULER_USER_ID: ${{ secrets.SCHEDULER_USER_ID }}
+      CANDIDATE_LEVEL: ${{ secrets.CANDIDATE_LEVEL }}
+      SENIORITY_STRICT: ${{ secrets.SENIORITY_STRICT }}
+      JOB_LOCATIONS: ${{ secrets.JOB_LOCATIONS }}
+      JOB_HOURS_FRESH: ${{ secrets.JOB_HOURS_FRESH }}
+      JOB_HOURS_OLD: ${{ secrets.JOB_HOURS_OLD }}
+      JOB_EXTRA_KEYWORDS: ${{ secrets.JOB_EXTRA_KEYWORDS }}
+      MIN_MATCH_SCORE: ${{ secrets.MIN_MATCH_SCORE }}
+      MIN_MATCH_SCORE_ENTRY: ${{ secrets.MIN_MATCH_SCORE_ENTRY }}
+      BLOCKED_COMPANIES: ${{ secrets.BLOCKED_COMPANIES }}
+      BLOCK_INTERNSHIPS: ${{ secrets.BLOCK_INTERNSHIPS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scheduled search
+        run: python -c "from scheduler.job_runner import run_scheduled_search; run_scheduled_search()"
