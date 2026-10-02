@@ -18,7 +18,13 @@ log = logging.getLogger(__name__)
 # external cron both firing the same 9:30 slot). Only one run may start within
 # this window — the rest are skipped, so you never get two PDFs for one slot.
 _run_lock = threading.Lock()
-_last_run_monotonic = 0.0
+# None (not 0.0) — time.monotonic()'s epoch is arbitrary (often system boot
+# time on Linux), not "process start". A fresh short-lived process (e.g. a
+# GitHub Actions runner that just booted) can have monotonic() < 20 minutes,
+# which made the very first call in that process look like a duplicate of a
+# run "0s ago" and silently skip every time. None means "no previous run yet
+# in this process" unambiguously, regardless of what the clock reads.
+_last_run_monotonic: float | None = None
 _MIN_GAP_SECONDS = 20 * 60  # 20 minutes
 
 
@@ -30,7 +36,7 @@ def run_scheduled_search() -> None:
     global _last_run_monotonic
     with _run_lock:
         now = time.monotonic()
-        if now - _last_run_monotonic < _MIN_GAP_SECONDS:
+        if _last_run_monotonic is not None and now - _last_run_monotonic < _MIN_GAP_SECONDS:
             log.info("Skipping duplicate run — last run was %.0fs ago (< %ds guard)",
                      now - _last_run_monotonic, _MIN_GAP_SECONDS)
             return
