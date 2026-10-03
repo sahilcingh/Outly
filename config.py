@@ -55,7 +55,7 @@ def get_database_url() -> str | None:
 # Groq model — use a model available on your Groq account.
 # Run: curl https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY"
 # to list available models. Note: llama-3.1-70b-versatile was decommissioned.
-GROQ_DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+GROQ_DEFAULT_MODEL = os.getenv("GROQ_MODEL") or "openai/gpt-oss-120b"
 
 
 # Gemini model — gemini-2.0-flash
