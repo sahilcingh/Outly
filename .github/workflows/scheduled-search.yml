@@ -5,14 +5,12 @@ name: Scheduled job search
 # wake-up is unreliable (confirmed: even a keep-alive ping failed), so the
 # search needs to run somewhere that doesn't depend on waking anything up.
 # Talks straight to Postgres/Groq/Telegram, same as the Render backend does.
+#
+# Triggered only via workflow_dispatch: an external cron calls GitHub's
+# dispatch API at exactly 9:30 AM / 2:30 PM IST, Mon-Sat. GitHub's own
+# `schedule:` trigger ran 1-7 hours late and sent extra digests on top.
 on:
-  schedule:
-    # Queued 45 min early (off the congested :00 mark) because GitHub delays
-    # scheduled runs; the "Wait until target time" step holds the run until
-    # exactly 9:30 AM / 2:30 PM IST so the delay is absorbed, not added.
-    - cron: "45 3 * * 1-6"  # queued 9:15 AM IST, runs 9:30 AM IST, Mon-Sat
-    - cron: "45 8 * * 1-6"  # queued 2:15 PM IST, runs 2:30 PM IST, Mon-Sat
-  workflow_dispatch: {}      # lets you trigger it manually from the Actions tab
+  workflow_dispatch: {}
 
 jobs:
   run-search:
@@ -44,18 +42,6 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
-
-      - name: Wait until target time (IST)
-        if: github.event_name == 'schedule'
-        run: |
-          case "${{ github.event.schedule }}" in
-            "45 3 * * 1-6") T="09:30" ;;
-            *) T="14:30" ;;
-          esac
-          target=$(TZ=Asia/Kolkata date -d "today $T" +%s)
-          wait=$((target - $(date +%s)))
-          echo "Waiting ${wait}s until $T IST"
-          if [ "$wait" -gt 0 ] && [ "$wait" -lt 3600 ]; then sleep "$wait"; fi
 
       - name: Run scheduled search
         run: python -c "from scheduler.job_runner import run_scheduled_search; run_scheduled_search()"
