@@ -13,7 +13,7 @@ psycopg2-binary>=2.9.9
 pypdf>=4.0.0
 
 # Job search
-python-jobspy>=1.1.14
+python-jobspy==1.1.82  # 1.4.0 rewrote internals; tools/job_search.py patches 1.1.x
 markdownify>=0.11.0
 regex>=2024.0.0
 
