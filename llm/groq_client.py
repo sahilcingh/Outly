@@ -66,6 +66,7 @@ def groq_json_call(
     model: str = GROQ_DEFAULT_MODEL,
     label: str = "Groq",
     max_tokens: int = 2048,
+    temperature: float = 0.7,
 ) -> str | None:
     """
     Make a Groq API call expecting JSON output.
@@ -90,7 +91,7 @@ def groq_json_call(
                     {"role": "user", "content": user},
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.7,
+                temperature=temperature,
                 max_tokens=max_tokens,
                 # gpt-oss models spend part of the completion budget on hidden
                 # reasoning before the actual JSON answer; at default effort

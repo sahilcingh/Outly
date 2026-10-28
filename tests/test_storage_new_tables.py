@@ -5,7 +5,9 @@ import storage.drafts as drafts
 
 def test_init_db_creates_new_tables(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "drafts.db"
-    monkeypatch.setattr(drafts, "DB_PATH", db_path)
+    monkeypatch.setattr(drafts, "DRAFTS_DB_PATH", db_path)
+    monkeypatch.setattr(drafts, "_USE_POSTGRES", False)
+    monkeypatch.setattr(drafts, "_P", "?")
     drafts.init_db()
 
     with sqlite3.connect(db_path) as conn:
@@ -23,7 +25,9 @@ def test_init_db_creates_new_tables(tmp_path, monkeypatch) -> None:
 
 def test_save_and_list_outreach_touches(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "drafts.db"
-    monkeypatch.setattr(drafts, "DB_PATH", db_path)
+    monkeypatch.setattr(drafts, "DRAFTS_DB_PATH", db_path)
+    monkeypatch.setattr(drafts, "_USE_POSTGRES", False)
+    monkeypatch.setattr(drafts, "_P", "?")
 
     drafts.save_company_profile(
         "Acme",

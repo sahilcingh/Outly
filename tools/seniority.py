@@ -20,16 +20,32 @@ _RANK = {name: i for i, name in enumerate(LEVELS)}
 # Title patterns, checked most-senior first. Word boundaries avoid false hits
 # (e.g. "ii" inside a word). First match wins.
 _PATTERNS = [
-    ("exec",      r"\b(chief|c[te]o|cxo|svp|evp|vp|vice\s*president)\b"),
+    ("exec",      r"\b(chief|c[te]o|cxo|svp|evp|avp|vp|vice\s*president)\b"),
     ("director",  r"\b(director|head\s+of)\b"),
     ("principal", r"\bprincipal\b"),
     ("staff",     r"\bstaff\b"),
     ("lead",      r"\b(lead|architect|engineering\s+manager|\bmanager)\b"),
-    ("senior",    r"\b(senior|sr\.?|snr|iii)\b"),
-    ("mid",       r"\b(mid|ii|sde[-\s]?2|l2|level\s*2)\b"),
+    ("senior",    r"\b(senior|sr\.?|snr|iii|(?:developer|engineer)\s*3)\b"),
+    ("mid",       r"\b(mid|ii|sde[-\s]?2|l2|level\s*2|(?:developer|engineer)\s*(?:2|ii))\b"),
     ("junior",    r"\b(junior|jr\.?|associate|sde[-\s]?1|level\s*1)\b"),
     ("entry",     r"\b(intern|internship|trainee|graduate|grad|entry|fresher|apprentice)\b"),
 ]
+
+
+# Exec markers (AVP / VP / Vice President) in short heading-like description
+# lines, e.g. "Assistant Vice President - Engineering". Lines that merely say
+# who the role reports to are ignored.
+_EXEC_HEADING = re.compile(r"\b(avp|vp|vice\s*president)\b", re.I)
+_REPORTS = re.compile(
+    r"report|under|\bwith\b|\bto\s+the\b|\bby\b|alongside|collaborat|partner|support|present|escalat|\bfor\s+the\b", re.I)
+
+
+def description_is_exec(description: str) -> bool:
+    for line in (description or "").splitlines():
+        line = line.strip()
+        if 0 < len(line) <= 80 and _EXEC_HEADING.search(line) and not _REPORTS.search(line):
+            return True
+    return False
 
 
 def level_from_years(years) -> str:
@@ -66,13 +82,15 @@ def _ceiling(candidate_level: str, strict: bool) -> int:
     return cand + 1
 
 
-def job_allowed(title: str, candidate_level: str, strict: bool = True) -> bool:
+def job_allowed(title: str, candidate_level: str, strict: bool = True, description: str = "") -> bool:
     """
     True if the job's title is at/below the candidate's ceiling.
     Unmarked titles (plain 'Software Engineer') are kept — they're often open
     to juniors and the scorer weighs them anyway.
     """
     job_level = infer_job_level(title)
+    if description_is_exec(description):
+        job_level = "exec"
     if job_level is None:
         return True
     # Floor: internships/trainee/fresher roles rank lowest, so they always
@@ -89,7 +107,10 @@ def filter_by_level(listings: list, candidate_level: str, strict: bool = True) -
     Filter a list of objects with a `.title` attribute by seniority.
     Returns (kept, dropped_count).
     """
-    kept = [l for l in listings if job_allowed(getattr(l, "title", ""), candidate_level, strict)]
+    kept = [
+        l for l in listings
+        if job_allowed(getattr(l, "title", ""), candidate_level, strict, getattr(l, "description", ""))
+    ]
     return kept, len(listings) - len(kept)
 
 

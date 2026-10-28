@@ -36,13 +36,18 @@ _US_STATES = [
 ]
 
 
+def _has_city(loc: str, cities) -> bool:
+    """Whole-word match, so "india" is not found in "Indiana"."""
+    return any(re.search(r"(?<![a-z])" + re.escape(c) + r"(?![a-z])", loc) for c in cities)
+
+
 def is_bengaluru(location: str) -> bool:
     loc = (location or "").lower()
     return any(c in loc for c in _BENGALURU)
 
 
 def _has_india_signal(loc: str) -> bool:
-    if any(c in loc for c in _INDIA_CITIES):
+    if _has_city(loc, _INDIA_CITIES):
         return True
     # Indeed commonly returns "<state abbrev>, IN" (2-letter country code),
     # e.g. "TN, IN", "UL, IN" — no city/state name we'd otherwise recognize.
@@ -76,11 +81,31 @@ def is_india_job(location: str, is_remote: bool = False) -> bool:
     return False
 
 
+def is_preferred_location(
+    location: str,
+    is_remote: bool = False,
+    preferred=("bengaluru", "bangalore"),
+    allow_remote_india: bool = True,
+) -> bool:
+    """
+    True if the job is in a preferred city, or (when allowed) is remote AND
+    explicitly India-based ("Remote, India"; bare "Remote" is not enough).
+    """
+    loc = (location or "").lower()
+    cities = {p.lower().strip() for p in preferred if p.strip()}
+    if cities & set(_BENGALURU):
+        cities |= set(_BENGALURU)
+    if _has_city(loc, cities):
+        return True
+    remote = is_remote or "remote" in loc or "work from home" in loc
+    return bool(allow_remote_india and remote and _has_india_signal(loc))
+
+
 def location_rank(location: str) -> int:
     """0 = Bengaluru (best), 1 = other India, 2 = remote/unknown."""
     if is_bengaluru(location):
         return 0
     loc = (location or "").lower()
-    if any(c in loc for c in _INDIA_CITIES):
+    if _has_city(loc, _INDIA_CITIES):
         return 1
     return 2

@@ -152,6 +152,22 @@ def _render_job(pdf, job, idx: int, epw: float) -> None:
     ]
     meta = "  |  ".join(b for b in meta_bits if b)
     pdf.multi_cell(0, 4, _san(meta), new_x="LMARGIN", new_y="NEXT")
+
+    # Match facts: raw score, required YoE, where/how the job works
+    info = getattr(job, "match_meta", None) or {}
+    min_years = info.get("required_min_years")
+    where = ", ".join(b for b in (info.get("work_location"), info.get("work_model")) if b)
+    facts = (f"Match score: {score}  |  Min. experience required: "
+             f"{(f'{min_years:g} yrs' if isinstance(min_years, (int, float)) else 'not stated')}"
+             f"  |  Work: {where or 'not stated'}")
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_text_color(*_INK)
+    pdf.multi_cell(0, 4, _san(facts), new_x="LMARGIN", new_y="NEXT")
+    missing = info.get("must_have_missing") or []
+    if missing:
+        pdf.set_text_color(*_RED)
+        pdf.multi_cell(0, 4, _san("Must-have skills missing: " + ", ".join(missing)),
+                       new_x="LMARGIN", new_y="NEXT")
     pdf.ln(1.5)
 
     # ── APPLY button (clickable) ────────────────────────────────────────────────
@@ -200,15 +216,21 @@ def _render_job(pdf, job, idx: int, epw: float) -> None:
                        new_x="LMARGIN", new_y="NEXT")
     if job.cover_letter:
         pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(*_RED)
+        pdf.cell(0, 4, "Cover Letter - DRAFT - review before sending", new_x="LMARGIN", new_y="NEXT")
+        if info.get("letter_status") == "fallback":
+            pdf.set_font("Helvetica", "I", 8)
+            pdf.multi_cell(0, 4, _san("The AI letter failed the fact-check against your resume, so this "
+                                      "short template (resume facts only) was used instead. Review and "
+                                      "personalise it."), new_x="LMARGIN", new_y="NEXT")
         pdf.set_text_color(*_INK)
-        pdf.cell(0, 4, "Cover Letter:", new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", "", 8)
         pdf.set_text_color(*_INK)
         pdf.multi_cell(0, 4, _san(job.cover_letter), new_x="LMARGIN", new_y="NEXT")
     else:
         pdf.set_font("Helvetica", "I", 8)
         pdf.set_text_color(*_GRAY)
-        pdf.cell(0, 4, "(No cover letter yet - generate from the web app)",
+        pdf.cell(0, 4, "(No cover letter: candidate name or resume text missing, or not generated yet. Set /name or re-upload the resume.)",
                  new_x="LMARGIN", new_y="NEXT")
 
     # ── Divider ─────────────────────────────────────────────────────────────────

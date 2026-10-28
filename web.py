@@ -1024,6 +1024,10 @@ def _tg_dispatch_command(text: str, chat_id: int) -> None:
         _tg_set_remote(text[len("/remote "):].strip())
     elif text.startswith("/experience "):
         _tg_set_experience(text[len("/experience "):].strip())
+    elif text.startswith("/name "):
+        _tg_set_name(text[len("/name "):].strip())
+    elif text.startswith("/cities "):
+        _tg_set_cities(text[len("/cities "):].strip())
     else:
         _tg_handle_free_text(text, chat_id)
 
@@ -1129,6 +1133,27 @@ def _tg_set_experience(value: str) -> None:
     )
 
 
+def _tg_set_name(value: str) -> None:
+    from tools.telegram_bot import send_message
+    from storage.settings import set_setting
+    if not value or value.lower() == "candidate":
+        send_message("Usage: /name <your full name> — used to sign cover letters")
+        return
+    set_setting("candidate_name", value, get_scheduler_user_id())
+    send_message(f"✍️ Cover letters will be signed *{value}*.")
+
+
+def _tg_set_cities(value: str) -> None:
+    from tools.telegram_bot import send_message
+    from storage.settings import set_setting
+    cities = [c.strip().lower() for c in value.replace(";", ",").split(",") if c.strip()]
+    if not cities:
+        send_message("Usage: /cities Bengaluru, Pune — only jobs in these cities (plus remote India) are kept")
+        return
+    set_setting("preferred_locations", cities, get_scheduler_user_id())
+    send_message(f"📍 Preferred cities: *{', '.join(cities)}*. Applies from the next search onward.")
+
+
 def _tg_handle_free_text(text: str, chat_id: int) -> None:
     """Free text that isn't an exact command — classify intent via Groq and
     dispatch to the same handlers the exact commands use."""
@@ -1212,11 +1237,14 @@ def _tg_handle_resume(msg: dict, chat_id: int) -> None:
 
     save_profile(profile)
 
-    role   = profile.get("role_title", "Unknown")
+    role   = profile.get("current_title") or profile.get("role_title", "Unknown")
     skills = ", ".join(profile.get("skills", [])[:6])
+    name   = profile.get("candidate_name") or "NOT FOUND (send /name <full name>, cover letters are blocked without it)"
     send_message(
         f"✅ *Resume saved!*\n\n"
+        f"*Name:* {name}\n"
         f"*Role:* {role}\n"
+        f"*Experience:* {profile.get('experience_years')} years\n"
         f"*Skills:* {skills}\n\n"
         f"I'll use this profile at the next scheduled job search (9:30 AM or 2:30 PM IST)."
     )
@@ -1388,6 +1416,8 @@ def _tg_help(chat_id: int) -> None:
         "/minscore <0-100> — Change the minimum match score\n"
         "/remote on|off — Restrict search to remote-only roles\n"
         "/experience <years> — Skip jobs that ask for more experience than this\n"
+        "/name <full name> — Name used to sign cover letters\n"
+        "/cities <a, b> — Cities to keep jobs from (default Bengaluru) plus remote India\n"
         "/help — Show this message\n\n"
         "You can also just type naturally — e.g. \"search now\" or \"only show me 70+ matches\" "
         "— I'll figure out what you mean.\n\n"
@@ -1446,17 +1476,24 @@ def _run_job_search_thread(
                 _jobs[job_id]["done"] = True
             return
 
+        # One overridden profile (form name, /experience, /name) for filters, matcher and letters
+        from storage.profiles import apply_overrides
+        from storage.settings import get_settings as _get_settings
+        prefs = _get_settings(user_id) if user_id else {}
+        if candidate_name:
+            prefs = {**prefs, "candidate_name": candidate_name}
+        profile = apply_overrides(profile, prefs)
+        candidate_name = profile["candidate_name"]
+
         role_title = profile.get("role_title", "Software Engineer")
         skills = profile.get("skills", [])
-        summary = profile.get("summary", "")
         emit("profile_ready", f"Role: {role_title} | Skills: {', '.join(skills[:5])}")
 
         # Resolve seniority (env override or derived from resume years)
-        from config import get_candidate_level, is_seniority_strict
-        from tools.seniority import level_from_years, filter_by_level, search_query_for_level
-        level = get_candidate_level() or level_from_years(profile.get("experience_years"))
+        from config import is_seniority_strict
+        from tools.seniority import filter_by_level, search_query_for_level
+        level = profile["level"]
         strict = is_seniority_strict()
-        profile["level"] = level
 
         # Search jobs (bias query to level unless the user typed their own keywords)
         base_query = keywords.strip() if keywords.strip() else role_title
@@ -1488,6 +1525,20 @@ def _run_job_search_thread(
                 _jobs[job_id]["result"] = {"saved": 0}
             return
 
+        # Same location rule as the scheduled search: preferred cities (plus the
+        # city typed in the form) or remote roles explicitly in India.
+        from config import get_preferred_locations, allow_remote_india
+        from tools.location import is_preferred_location
+        preferred = list(prefs.get("preferred_locations") or get_preferred_locations())
+        form_city = (location or "").split(",")[0].strip().lower()
+        if form_city and form_city != "india" and form_city not in preferred:
+            preferred.append(form_city)
+        remote_ok = allow_remote_india()
+        before = len(listings)
+        listings = [l for l in listings if is_preferred_location(l.location, l.is_remote, preferred, remote_ok)]
+        if before - len(listings):
+            emit("searching", f"Filtered {before - len(listings)} roles outside your preferred locations...")
+
         # User preference: no internship roles at all, and never these companies.
         from config import get_blocked_companies, get_block_internships
         if get_block_internships():
@@ -1495,20 +1546,21 @@ def _run_job_search_thread(
         listings, _dropped = filter_by_blocklist(listings, get_blocked_companies())
 
         # Description states more years than the candidate has — skip it.
-        from storage.settings import get_settings as _get_settings
         from tools.experience import filter_by_experience
-        candidate_years = _get_settings(user_id).get("experience_years") if user_id else None
-        if candidate_years is None:
-            candidate_years = profile.get("experience_years")
-        if candidate_years is not None:
-            listings, _dropped = filter_by_experience(listings, candidate_years)
+        listings, _dropped = filter_by_experience(listings, profile["experience_years"])
 
-        # Drop over-level roles, then filter already-saved (one batched query)
+        # Drop over-level roles, avoid-listed skills/domains, then filter
+        # already-saved (one batched query) and duplicate company+title roles.
         listings, dropped = filter_by_level(listings, level, strict)
         if dropped:
             emit("scoring", f"Filtered {dropped} roles above your {level} level...")
+        from config import get_avoid_skills, get_avoid_domains
+        from tools.filters import filter_by_avoid, dedupe_listings
+        from storage.jobs import get_seen_job_keys
+        listings, _dropped = filter_by_avoid(listings, get_avoid_skills() + get_avoid_domains())
         existing_urls = get_existing_job_urls(user_id)
-        new_listings = [l for l in listings if l.job_url not in existing_urls]
+        listings = [l for l in listings if l.job_url not in existing_urls]
+        new_listings, _dropped = dedupe_listings(listings, get_seen_job_keys(user_id))
         emit("scoring", f"Scoring {len(new_listings)} {level}-level jobs...")
 
         if not new_listings:
@@ -1536,14 +1588,7 @@ def _run_job_search_thread(
             }
             for l in new_listings
         ]
-        candidate_profile_for_scoring = {
-            "role_title": role_title,
-            "skills": skills,
-            "summary": summary,
-            "industries": profile.get("industries", []),
-            "level": level,
-            "experience_years": profile.get("experience_years", "0-1"),
-        }
+        candidate_profile_for_scoring = profile
         scored = score_jobs_parallel(job_dicts, candidate_profile_for_scoring)
         above_threshold = [j for j in scored if j.get("score", 0) >= min_score]
 
@@ -1559,7 +1604,7 @@ def _run_job_search_thread(
         for job in scored:
             score = job.get("score", 0)
             cover_letter = ""
-            subject_line = f"Application for {job['title']} — {candidate_name or role_title}"
+            subject_line = f"Application for {job['title']}" + (f" - {candidate_name}" if candidate_name else "")
 
             if id(job) in letter_targets:
                 try:
@@ -1570,9 +1615,10 @@ def _run_job_search_thread(
                         description=job.get("description", ""),
                         candidate_profile=candidate_profile_for_scoring,
                         candidate_name=candidate_name,
+                        gaps=list(job.get("gaps", [])) + list(job.get("must_have_missing", [])),
                     )
                     cover_letter = cl_result.get("cover_letter", "")
-                    subject_line = cl_result.get("subject_line", subject_line)
+                    subject_line = cl_result.get("subject_line") or subject_line
                 except Exception as e:
                     log.warning("Cover letter failed for %s: %s", job["title"], e)
 

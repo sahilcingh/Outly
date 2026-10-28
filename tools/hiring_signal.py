@@ -1,7 +1,7 @@
 """
 Hiring signal detector: checks if a company has open technical roles.
 Checks the company's own /careers page first, then common ATS platforms
-(Greenhouse, Lever, Workable) using a slug derived from the company name.
+(Greenhouse, Lever, Ashby, Workable) using a slug derived from the company name.
 """
 
 from __future__ import annotations
@@ -11,6 +11,8 @@ import re
 
 import requests
 from bs4 import BeautifulSoup
+
+from tools.ats_board import board_jobs
 
 log = logging.getLogger(__name__)
 
@@ -119,19 +121,12 @@ def find_hiring_signals(base_url: str, company_name: str) -> list[dict]:
                 log.info("Hiring signals from %s: %s", url_to_fetch, [j["title"] for j in jobs[:3]])
                 return jobs[:8]
 
-    # 2. Common ATS platforms
-    ats_urls = [
-        f"https://boards.greenhouse.io/{slug}",
-        f"https://jobs.lever.co/{slug}",
-        f"https://apply.workable.com/{slug}",
-    ]
-    for url in ats_urls:
-        html = _fetch(url)
-        if html:
-            jobs = _extract_jobs(html, url)
-            if jobs:
-                log.info("Hiring signals from ATS %s: %s", url, [j["title"] for j in jobs[:3]])
-                return jobs[:8]
+    # 2. Common ATS platforms, via their public JSON feeds (no HTML scraping)
+    for platform in ("greenhouse", "lever", "ashby", "workable"):
+        jobs = [j for j in board_jobs(platform, slug) or [] if _TECH_KEYWORDS.search(j["title"])]
+        if jobs:
+            log.info("Hiring signals from %s/%s: %s", platform, slug, [j["title"] for j in jobs[:3]])
+            return jobs[:8]
 
     log.info("No open tech roles found for '%s'", company_name)
     return []

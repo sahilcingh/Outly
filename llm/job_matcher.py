@@ -9,8 +9,15 @@ import concurrent.futures
 import logging
 
 from llm.groq_client import groq_json_call
+from tools.filters import build_job_text
+from tools.prescore import prescore
 
 log = logging.getLogger(__name__)
+
+# A missing MUST-HAVE skill caps the score here (enforced in code, not just the prompt).
+MUST_HAVE_CAP = 59  # just under the default junior min score (60), so they do not reach the digest
+
+_EMPTY = {"required_min_years": None, "work_location": "", "work_model": "", "must_have_missing": []}
 
 _SYSTEM = """You are an expert technical recruiter scoring how well a job listing matches a candidate's profile.
 Respond ONLY with valid JSON — no markdown, no extra text."""
@@ -27,7 +34,7 @@ JOB LISTING:
 Title: {job_title}
 Company: {company}
 Location: {location}
-Description (first 1200 chars):
+Description (requirements section first, then the rest):
 {description}
 
 Score this match from 0 to 100 based on BOTH skill fit AND seniority fit:
@@ -42,12 +49,20 @@ Staff, Lead, Principal, Architect, Manager/Director titles, or the description
 demands significantly more years of experience than the candidate has — CAP the
 score at 30, no matter how well the skills overlap. An over-level role is a poor fit.
 {entry_rigor}
+MUST-HAVE RULE (critical): if ANY must-have / required (NOT nice-to-have, preferred or bonus)
+skill is missing from the candidate's skills, CAP the score at {must_have_cap}. List those skills in
+"must_have_missing". Only judge against the candidate's skills listed above.
+
 Return exactly this JSON:
 {{
   "score": <integer 0-100>,
   "rationale": "<2-3 sentences explaining the score, mention seniority fit>",
   "key_matches": ["<skill or requirement that aligns>", ...],
-  "gaps": ["<important requirement candidate lacks>", ...]
+  "gaps": ["<important requirement candidate lacks>", ...],
+  "required_min_years": <minimum years of experience the job requires, number, or null if not stated>,
+  "work_location": "<city/region the job is based in, or \"\" if unknown>",
+  "work_model": "<onsite | hybrid | remote, or \"\" if unknown>",
+  "must_have_missing": ["<required (must-have) skill the candidate lacks>", ...]
 }}
 """
 
@@ -81,16 +96,17 @@ def score_job(
 
     prompt = _PROMPT.format(
         role_title       = candidate_profile.get("role_title", "Software Engineer"),
-        experience_years = candidate_profile.get("experience_years", candidate_profile.get("years_experience", "0-1")),
+        experience_years = candidate_profile.get("experience_years", "0-1"),
         level            = level,
-        skills           = ", ".join(candidate_profile.get("skills", [])[:20]),
+        skills           = ", ".join(candidate_profile.get("skills", [])),
         industries       = ", ".join(candidate_profile.get("industries", [])[:5]),
         summary          = (candidate_profile.get("summary", "") or "")[:400],
         job_title        = job_title,
         company          = company,
         location         = location,
-        description      = (description or "")[:1200],
+        description      = build_job_text(description),
         entry_rigor      = entry_rigor,
+        must_have_cap    = MUST_HAVE_CAP,
     )
     try:
         import json as _json
@@ -100,16 +116,28 @@ def score_job(
         # of these back to back against Groq's per-minute token budget.
         raw = groq_json_call(system=_SYSTEM, user=prompt, label="job_matcher", max_tokens=600)
         result = _json.loads(raw) if isinstance(raw, str) else raw
-        score = int(result.get("score", 0))
+        score = max(0, min(100, int(result.get("score", 0))))
+        missing = [str(x) for x in (result.get("must_have_missing") or [])][:6]
+        if missing:
+            score = min(score, MUST_HAVE_CAP)
+        try:
+            min_years = float(result["required_min_years"])
+        except (KeyError, TypeError, ValueError):
+            min_years = None
+        model = str(result.get("work_model") or "").strip().lower()
         return {
-            "score":       max(0, min(100, score)),
+            "score":       score,
+            "required_min_years": min_years,
+            "work_location":      str(result.get("work_location") or "")[:100],
+            "work_model":         model if model in ("onsite", "hybrid", "remote") else "",
+            "must_have_missing":  missing,
             "rationale":   str(result.get("rationale", ""))[:500],
             "key_matches": result.get("key_matches", [])[:6],
             "gaps":        result.get("gaps", [])[:4],
         }
     except Exception as e:
         log.warning("Job scoring failed for '%s' at '%s': %s", job_title, company, e)
-        return {"score": 0, "rationale": "Scoring failed.", "key_matches": [], "gaps": []}
+        return {"score": 0, "rationale": "Scoring failed.", "key_matches": [], "gaps": [], **_EMPTY}
 
 
 def score_jobs_parallel(
@@ -125,28 +153,45 @@ def score_jobs_parallel(
     workers here just overlap network latency — the throttle serializes starts.
 
     - Jobs with no usable description are skipped (LinkedIn omits many): score 0.
-    - Only the first `max_to_score` scoreable jobs hit the LLM; the rest are
-      returned unscored so a single search doesn't burn minutes or daily quota.
+    - Jobs naming none of the candidate's skills are skipped: score 0.
+    - Only the top `max_to_score` jobs by deterministic pre-score hit the LLM; the
+      rest are returned unscored so a single search doesn't burn minutes or daily quota.
     """
     scoreable = [j for j in jobs if len((j.get("description") or "").strip()) > 100]
     no_desc   = [j for j in jobs if len((j.get("description") or "").strip()) <= 100]
 
-    # Cap LLM work. LinkedIn returns newest-first, so the head is the freshest.
+    # Deterministic pre-score: jobs naming none of the candidate's skills never
+    # reach the LLM, and the cap keeps the best pre-scored jobs (stable sort, so
+    # ties stay newest-first as LinkedIn returned them).
+    has_skills = bool(candidate_profile.get("skills"))
+    no_overlap, kept = [], []
+    for j in scoreable:
+        pre = prescore(j, candidate_profile)
+        j["prescore"] = pre["score"]
+        (no_overlap if has_skills and not pre["skill_hits"] else kept).append(j)
+    scoreable = kept
+    scoreable.sort(key=lambda j: j["prescore"] or 0, reverse=True)
+
     to_score = scoreable[:max_to_score]
     overflow = scoreable[max_to_score:]
 
     if no_desc:
         log.info("Skipping %d jobs with missing/short descriptions", len(no_desc))
+    if no_overlap:
+        log.info("Skipping %d jobs sharing no skills with the candidate", len(no_overlap))
     if overflow:
         log.info("Capping scoring at %d jobs; %d left unscored this run",
                  max_to_score, len(overflow))
 
     for j in no_desc:
         j.update({"score": 0, "rationale": "No job description available.",
-                  "key_matches": [], "gaps": []})
+                  "key_matches": [], "gaps": [], **_EMPTY})
+    for j in no_overlap:
+        j.update({"score": 0, "rationale": "None of the candidate's skills appear in the listing.",
+                  "key_matches": [], "gaps": [], **_EMPTY})
     for j in overflow:
         j.update({"score": 0, "rationale": "Not scored (search cap reached).",
-                  "key_matches": [], "gaps": []})
+                  "key_matches": [], "gaps": [], **_EMPTY})
 
     def _score_one(job: dict) -> dict:
         result = score_job(
@@ -163,5 +208,5 @@ def score_jobs_parallel(
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
             scored = list(pool.map(_score_one, to_score))
 
-    all_jobs = scored + overflow + no_desc
+    all_jobs = scored + overflow + no_overlap + no_desc
     return sorted(all_jobs, key=lambda j: j.get("score", 0), reverse=True)
