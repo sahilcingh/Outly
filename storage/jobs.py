@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Generator
 
@@ -57,6 +57,8 @@ class JobApplication:
     telegram_message_id: int | None = None
     revision_count: int = 0
     revision_feedback: str = ""
+    sort_score: int = 0         # bonus-adjusted, used only for ordering; match_score stays raw
+    match_meta: dict = field(default_factory=dict)  # required_min_years, work_location, work_model, must_have_missing, letter_status
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +129,9 @@ CREATE TABLE IF NOT EXISTS job_applications (
     candidate_role      TEXT DEFAULT '',
     telegram_message_id INTEGER DEFAULT NULL,
     revision_count      INTEGER DEFAULT 0,
-    revision_feedback   TEXT DEFAULT ''
+    revision_feedback   TEXT DEFAULT '',
+    sort_score          INTEGER DEFAULT 0,
+    match_meta          TEXT DEFAULT '{{}}'
 )
 """
 
@@ -135,6 +139,8 @@ _MIGRATIONS = [
     "ALTER TABLE job_applications ADD COLUMN telegram_message_id INTEGER DEFAULT NULL",
     "ALTER TABLE job_applications ADD COLUMN revision_count INTEGER DEFAULT 0",
     "ALTER TABLE job_applications ADD COLUMN revision_feedback TEXT DEFAULT ''",
+    "ALTER TABLE job_applications ADD COLUMN sort_score INTEGER DEFAULT 0",
+    "ALTER TABLE job_applications ADD COLUMN match_meta TEXT DEFAULT '{}'",
 ]
 
 
@@ -181,6 +187,8 @@ def save_job_application(
     company_url: str | None = None,
     candidate_name: str = "",
     candidate_role: str = "",
+    sort_score: int | None = None,
+    match_meta: dict | None = None,
 ) -> int:
     """Insert a new job application row; returns the new row id."""
     ph = "%s" if _USE_POSTGRES else "?"
@@ -190,10 +198,10 @@ def save_job_application(
              is_remote, date_posted, source, job_description, match_score,
              match_rationale, key_matches, gaps, cover_letter, subject_line,
              apply_method, contact_email, ats_url, candidate_name, candidate_role,
-             created_at, status)
+             created_at, status, sort_score, match_meta)
         VALUES
             ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},
-             {ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})
+             {ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})
         {'RETURNING id' if _USE_POSTGRES else ''}
     """
     vals = (
@@ -220,6 +228,8 @@ def save_job_application(
         (candidate_role or "")[:200],
         datetime.now(timezone.utc).isoformat(),
         "queued",
+        match_score if sort_score is None else sort_score,
+        json.dumps(match_meta or {}),
     )
     with _conn() as conn:
         cur = conn.cursor()
@@ -278,23 +288,41 @@ def update_job_status(job_id: int, status: str) -> bool:
         return cur.rowcount > 0
 
 
-def update_cover_letter(job_id: int, cover_letter: str) -> bool:
+def update_cover_letter(job_id: int, cover_letter: str, letter_status: str | None = None,
+                        subject_line: str | None = None) -> bool:
     ph = "%s" if _USE_POSTGRES else "?"
-    sql = f"UPDATE job_applications SET cover_letter = {ph} WHERE id = {ph}"
+    sql = f"UPDATE job_applications SET cover_letter = {ph}, subject_line = COALESCE({ph}, subject_line) WHERE id = {ph}"
     with _conn() as conn:
         cur = conn.cursor()
-        cur.execute(sql, (cover_letter, job_id))
-        return cur.rowcount > 0
+        cur.execute(sql, (cover_letter, subject_line, job_id))
+        ok = cur.rowcount > 0
+    if ok and letter_status is not None:
+        update_job_meta(job_id, letter_status=letter_status)
+    return ok
+
+
+def update_job_meta(job_id: int, **fields) -> None:
+    """Merge fields into the job's match_meta JSON."""
+    job = get_job_application(job_id)
+    if not job:
+        return
+    meta = {**job.match_meta, **fields}
+    ph = "%s" if _USE_POSTGRES else "?"
+    with _conn() as conn:
+        conn.cursor().execute(
+            f"UPDATE job_applications SET match_meta = {ph} WHERE id = {ph}",
+            (json.dumps(meta), job_id),
+        )
 
 
 def get_queued_jobs(user_id: int | None = None, limit: int = 10) -> list[JobApplication]:
     """Fetch jobs with status 'queued', sorted by match_score desc. Used by scheduler."""
     ph = "%s" if _USE_POSTGRES else "?"
     if user_id is not None:
-        sql = f"SELECT * FROM job_applications WHERE user_id = {ph} AND status = 'queued' ORDER BY match_score DESC, created_at DESC LIMIT {ph}"
+        sql = f"SELECT * FROM job_applications WHERE user_id = {ph} AND status = 'queued' ORDER BY COALESCE(NULLIF(sort_score, 0), match_score) DESC, match_score DESC, created_at DESC LIMIT {ph}"
         params = (user_id, limit)
     else:
-        sql = f"SELECT * FROM job_applications WHERE status = 'queued' ORDER BY match_score DESC, created_at DESC LIMIT {ph}"
+        sql = f"SELECT * FROM job_applications WHERE status = 'queued' ORDER BY COALESCE(NULLIF(sort_score, 0), match_score) DESC, match_score DESC, created_at DESC LIMIT {ph}"
         params = (limit,)
     with _conn() as conn:
         cur = conn.cursor()
@@ -387,6 +415,20 @@ def get_existing_job_urls(user_id: int | None = None) -> set[str]:
     return urls
 
 
+def get_seen_job_keys(user_id: int | None = None) -> list[tuple[str, str]]:
+    """(company, title) of every job already saved/shown for this user, for cross-run de-duplication."""
+    ph = "%s" if _USE_POSTGRES else "?"
+    sql = "SELECT company_name, job_title FROM job_applications"
+    params: tuple = ()
+    if user_id is not None:
+        sql += f" WHERE user_id = {ph}"
+        params = (user_id,)
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        return [(r[0] or "", r[1] or "") for r in cur.fetchall()]
+
+
 # ---------------------------------------------------------------------------
 # Row converter
 # ---------------------------------------------------------------------------
@@ -404,7 +446,8 @@ def _row_to_job(row) -> JobApplication:
                 "job_description", "match_score", "match_rationale", "key_matches",
                 "gaps", "cover_letter", "subject_line", "apply_method",
                 "contact_email", "ats_url", "status", "applied_at", "created_at",
-                "candidate_name", "candidate_role",
+                "candidate_name", "candidate_role", "telegram_message_id",
+                "revision_count", "revision_feedback", "sort_score", "match_meta",
             ]
             d = dict(zip(keys, row))
 
@@ -413,6 +456,13 @@ def _row_to_job(row) -> JobApplication:
             return json.loads(v or "[]")
         except Exception:
             return []
+
+    def _jd(v):
+        try:
+            out = json.loads(v or "{}")
+            return out if isinstance(out, dict) else {}
+        except Exception:
+            return {}
 
     return JobApplication(
         id              = d.get("id"),
@@ -443,4 +493,6 @@ def _row_to_job(row) -> JobApplication:
         telegram_message_id = d.get("telegram_message_id"),
         revision_count      = int(d.get("revision_count") or 0),
         revision_feedback   = d.get("revision_feedback") or "",
+        sort_score          = int(d.get("sort_score") or 0),
+        match_meta          = _jd(d.get("match_meta")),
     )

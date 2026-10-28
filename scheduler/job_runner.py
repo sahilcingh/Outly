@@ -66,60 +66,85 @@ def run_scheduled_search() -> None:
     _search_and_queue(profile, limit)
 
 
+def _log_drop(stage: str, before: int, after: int) -> None:
+    if before > after:
+        log.info("Filter %-14s dropped %d", stage, before - after)
+
+
 def _search_and_queue(profile: dict, limit: int) -> None:
     from tools.job_search import search_jobs, filter_intern_roles, filter_by_blocklist
     from tools.experience import filter_by_experience
+    from tools.filters import filter_by_avoid, dedupe_listings
+    from tools.ats_board import filter_ghost_jobs
     from llm.job_matcher import score_jobs_parallel
     from llm.cover_letter import generate_cover_letter
     from storage.jobs import (
-        init_jobs_table, save_job_application, get_existing_job_urls, get_queued_jobs
+        init_jobs_table, save_job_application, get_existing_job_urls, get_seen_job_keys
     )
-    from storage.profiles import load_profile
+    from storage.profiles import apply_overrides
     from tools.telegram_bot import send_message
     from config import (
-        get_scheduler_user_id, get_candidate_level, is_seniority_strict,
+        get_scheduler_user_id, is_seniority_strict, resolve_min_score,
         get_job_locations, get_job_hours_old, get_job_hours_fresh, get_extra_job_keywords,
-        get_blocked_companies, get_block_internships,
+        get_blocked_companies, get_block_internships, get_preferred_locations,
+        allow_remote_india, get_avoid_skills, get_avoid_domains,
     )
-    from tools.seniority import level_from_years, filter_by_level, search_query_for_level
-    from tools.location import is_india_job, location_rank
+    from tools.seniority import filter_by_level, search_query_for_level
+    from tools.location import is_india_job, is_preferred_location, location_rank
     from storage.settings import get_settings
 
     user_id = get_scheduler_user_id()
-    role_title = profile.get("role_title", "Software Engineer")
-    skills = profile.get("skills", [])
-    candidate_name = profile.get("candidate_name", "")
 
-    # Resolve seniority: env override wins, else derive from resume years
-    level = get_candidate_level() or level_from_years(profile.get("experience_years"))
-    strict = is_seniority_strict()
-    profile["level"] = level  # so the scorer sees it
-
-    # Chat-settable overrides (via /location, /minscore, /remote) win over the
-    # global env-var defaults for this user.
+    # Chat-settable overrides (via /location, /minscore, /remote, /experience,
+    # /name, /cities) win over the global env-var defaults for this user.
+    # The overridden profile is the ONE object the filters, matcher and cover
+    # letter generator all see (name, experience_years, level).
     prefs = get_settings(user_id)
+    profile = apply_overrides(profile, prefs)
+    level = profile["level"]
+    candidate_years = profile["experience_years"]
+    candidate_name = profile["candidate_name"]
+    role_title = profile.get("role_title", "Software Engineer")
+    target_roles = profile.get("target_roles") or [role_title]
+    strict = is_seniority_strict()
+
+    if not candidate_name:
+        log.warning("Candidate name unknown: cover letters will be blocked. "
+                    "Set it with /name <full name> or re-upload the resume.")
+
+    min_score, min_score_src = resolve_min_score(level, prefs.get("min_score"))
+    log.info("Effective min_score=%d (source: %s) | level=%s | experience_years=%s",
+             min_score, min_score_src, level, candidate_years)
+
     locations = [prefs["location"]] if prefs.get("location") else get_job_locations()
     remote_only_pref = bool(prefs.get("remote_only", False))
-    # /experience override wins over the resume-derived years.
-    candidate_years = prefs.get("experience_years")
-    if candidate_years is None:
-        candidate_years = profile.get("experience_years")
+
+    preferred = list(prefs.get("preferred_locations") or get_preferred_locations())
+    if prefs.get("location"):
+        city = prefs["location"].split(",")[0].strip().lower()
+        if city and city != "india" and city not in preferred:
+            preferred.append(city)
+    remote_india_ok = allow_remote_india()
+    avoid_terms = get_avoid_skills() + get_avoid_domains()
 
     fresh_hours = get_job_hours_fresh()    # tight window, tried first (~couple hrs)
     max_hours = get_job_hours_old()        # widen to this if fresh is empty (cap)
-    base_query = search_query_for_level(role_title, level)
+    base_query = search_query_for_level(target_roles[0], level)
 
-    # (query, location) pairs to scrape, in priority order. For entry/junior we
-    # also search internships and apprenticeships (broad India location only, to
-    # bound scrape time).
+    # (query, location) pairs to scrape, in priority order. A second target role
+    # is searched in the broad (last) location only. For entry/junior we also
+    # search internships and apprenticeships (broad India location only).
     pairs = [(base_query, loc) for loc in locations]
+    broad_loc = locations[-1] if locations else "India"
+    if len(target_roles) > 1:
+        pairs.append((search_query_for_level(target_roles[1], level), broad_loc))
     if level in ("entry", "junior"):
-        broad_loc = locations[-1] if locations else "India"
         for kw in get_extra_job_keywords():
-            pairs.append((f"{role_title} {kw}", broad_loc))
+            pairs.append((f"{target_roles[0]} {kw}", broad_loc))
 
     init_jobs_table()
     existing_urls = get_existing_job_urls(user_id)
+    seen_keys = get_seen_job_keys(user_id)
 
     def _fetch(hours: int) -> list:
         """Search all (query, location) pairs for a recency window, merge + filter."""
@@ -137,20 +162,34 @@ def _search_and_queue(profile: dict, limit: int) -> None:
             if len(by_url) >= 60:
                 break
         batch = list(by_url.values())
-        # India only — a remote role isn't kept just because it's remote;
-        # a location with no India marker at all is dropped too.
-        batch = [l for l in batch if is_india_job(l.location, l.is_remote)]
+        log.info("Fetched %d unique listings (last %dh)", len(batch), hours)
+
+        def stage(name: str, before: list, after: list) -> list:
+            _log_drop(name, len(before), len(after))
+            return after
+
+        # India only, then only preferred cities (or remote roles explicitly in India)
+        batch = stage("not-india", batch, [l for l in batch if is_india_job(l.location, l.is_remote)])
+        batch = stage("location", batch, [
+            l for l in batch
+            if is_preferred_location(l.location, l.is_remote, preferred, remote_india_ok)
+        ])
         # User preference: no internship roles at all, and never these companies.
         if get_block_internships():
-            batch, _dropped = filter_intern_roles(batch)
-        batch, _dropped = filter_by_blocklist(batch, get_blocked_companies())
-        # Description states more years than the candidate has — skip it.
-        if candidate_years is not None:
-            batch, _dropped = filter_by_experience(batch, candidate_years)
+            batch = stage("internship", batch, filter_intern_roles(batch)[0])
+        batch = stage("blocklist", batch, filter_by_blocklist(batch, get_blocked_companies())[0])
+        # Description states more years than the candidate has: skip it.
+        batch = stage("experience", batch, filter_by_experience(batch, candidate_years)[0])
         # At/below the candidate's seniority ceiling (keeps apprenticeships)
-        batch, _dropped = filter_by_level(batch, level, strict)
+        batch = stage("seniority", batch, filter_by_level(batch, level, strict)[0])
+        # Avoid-listed skills (must-have) / domains: dropped before any LLM scoring
+        batch = stage("avoid-list", batch, filter_by_avoid(batch, avoid_terms)[0])
         # Not already saved
-        return [l for l in batch if l.job_url not in existing_urls]
+        batch = stage("already-saved", batch, [l for l in batch if l.job_url not in existing_urls])
+        # Same company+title across cities / earlier digests: keep one, prefer Bengaluru
+        batch = stage("duplicate", batch, dedupe_listings(batch, seen_keys)[0])
+        # Role no longer on the employer's own ATS board (network, so last)
+        return stage("ghost", batch, filter_ghost_jobs(batch)[0])
 
     # ── Two-tier recency: try the last few hours, widen to 24h only if empty ──
     try:
@@ -165,13 +204,13 @@ def _search_and_queue(profile: dict, limit: int) -> None:
         send_message(f"⚠️ Job search failed: {e}")
         return
 
-    log.info("Found %d new India %s-level listings (last %dh)",
+    log.info("Found %d new %s-level listings in preferred locations (last %dh)",
              len(new_listings), level, used_hours)
 
     if not new_listings:
         send_message(
-            f"ℹ️ No new {level}-level jobs in India posted in the last {max_hours}h "
-            f"this round. Queue up to date."
+            f"ℹ️ No new {level}-level jobs in your preferred locations posted in the last "
+            f"{max_hours}h this round. Queue up to date."
         )
         _dispatch_queued_jobs(user_id, limit)
         return
@@ -196,29 +235,29 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     ]
     scored = score_jobs_parallel(job_dicts, profile)
 
-    # Prefer Bengaluru: small score nudge so local roles rank above equal matches
+    # Strict resume alignment: gate on the RAW score (location bonus not included).
+    before = len(scored)
+    scored = [j for j in scored if j.get("score", 0) >= min_score]
+    _log_drop(f"score<{min_score}", before, len(scored))
+
+    # The matcher read the whole requirements section: drop what asks for more
+    # years than the candidate has.
+    before = len(scored)
+    scored = [j for j in scored
+              if j.get("required_min_years") is None or j["required_min_years"] <= candidate_years]
+    _log_drop("matcher-min-yoe", before, len(scored))
+
+    # Prefer Bengaluru: nudge ordering only. "score" stays raw (shown in the PDF);
+    # the bonus lives in "sort_score".
     for j in scored:
         rank = location_rank(j.get("location", ""))
-        if rank == 0:      # Bengaluru
-            j["score"] = min(100, j.get("score", 0) + 8)
-        elif rank == 1:    # elsewhere in India
-            j["score"] = min(100, j.get("score", 0) + 3)
-    scored.sort(key=lambda j: j.get("score", 0), reverse=True)
-
-    # Strict resume alignment: drop anything below the match threshold. Aligned
-    # roles (full-time, internship, or apprenticeship) score high; off-domain
-    # ones score low and are excluded here — so only résumé-matching jobs queue.
-    from config import get_min_match_score
-    min_score = int(prefs["min_score"]) if prefs.get("min_score") is not None else get_min_match_score(level)
-    before_gate = len(scored)
-    scored = [j for j in scored if j.get("score", 0) >= min_score]
-    if before_gate - len(scored):
-        log.info("Relevance gate (score >= %d) dropped %d off-profile jobs",
-                 min_score, before_gate - len(scored))
+        bonus = 8 if rank == 0 else 3 if rank == 1 else 0
+        j["sort_score"] = min(100, j.get("score", 0) + bonus)
+    scored.sort(key=lambda j: j["sort_score"], reverse=True)
 
     if not scored:
         send_message(
-            f"ℹ️ Found new {level}-level jobs in India, but none matched your "
+            f"ℹ️ Found new {level}-level jobs, but none matched your "
             f"résumé strongly enough (score ≥ {min_score}) this round."
         )
         _dispatch_queued_jobs(user_id, limit)
@@ -232,7 +271,14 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     saved = 0
     for job in scored:
         score = job.get("score", 0)
-        cover_letter, subject_line = "", f"Application for {job['title']} — {candidate_name or role_title}"
+        cover_letter = ""
+        subject_line = f"Application for {job['title']}" + (f" - {candidate_name}" if candidate_name else "")
+        meta = {
+            "required_min_years": job.get("required_min_years"),
+            "work_location":      job.get("work_location", ""),
+            "work_model":         job.get("work_model", ""),
+            "must_have_missing":  job.get("must_have_missing", []),
+        }
 
         if id(job) in letter_targets:
             try:
@@ -243,9 +289,11 @@ def _search_and_queue(profile: dict, limit: int) -> None:
                     description=job.get("description", ""),
                     candidate_profile=profile,
                     candidate_name=candidate_name,
+                    gaps=list(job.get("gaps", [])) + list(job.get("must_have_missing", [])),
                 )
                 cover_letter = cl.get("cover_letter", "")
-                subject_line = cl.get("subject_line", subject_line)
+                subject_line = cl.get("subject_line") or subject_line
+                meta["letter_status"] = cl.get("status", "")
             except Exception as e:
                 log.warning("Cover letter failed for %s: %s", job["title"], e)
 
@@ -271,7 +319,9 @@ def _search_and_queue(profile: dict, limit: int) -> None:
                 ats_url=job.get("ats_url"),
                 company_url=job.get("company_url"),
                 candidate_name=candidate_name,
-                candidate_role=role_title,
+                candidate_role=profile.get("current_title") or role_title,
+                sort_score=job["sort_score"],
+                match_meta=meta,
             )
             saved += 1
         except Exception as e:
@@ -287,24 +337,32 @@ def _dispatch_queued_jobs(user_id: int, limit: int) -> None:
     No approve/reject step — the user reads the PDF and applies directly via the
     tappable apply links. Dispatched jobs are marked 'sent' so they don't
     reappear in every future digest. A cover letter is filled in lazily for any
-    job missing one before it goes into the PDF.
+    job missing one (or still carrying the old "Candidate" placeholder) before
+    it goes into the PDF.
     """
+    import re
     from storage.jobs import (
         get_queued_jobs, update_cover_letter, get_job_application, update_job_status
     )
     from llm.cover_letter import generate_cover_letter
-    from storage.profiles import load_profile
+    from storage.profiles import load_profile, apply_overrides
+    from storage.settings import get_settings
 
     queued = get_queued_jobs(user_id=user_id, limit=limit)
     if not queued:
         return
 
-    profile = load_profile() or {}
+    # Same overridden profile object the search/scoring path used
+    profile = apply_overrides(load_profile() or {}, get_settings(user_id))
+
+    def _needs_letter(job) -> bool:
+        text = f"{job.cover_letter or ''} {job.subject_line or ''}"
+        return not (job.cover_letter or "").strip() or re.search(r"\bCandidate\b", text) is not None
 
     # Ensure every job has a cover letter (fill lazily if missing)
     finalized = []
     for job in queued:
-        if not (job.cover_letter or "").strip() and (job.job_description or "").strip():
+        if _needs_letter(job) and (job.job_description or "").strip():
             try:
                 cl = generate_cover_letter(
                     job_title=job.job_title,
@@ -312,11 +370,13 @@ def _dispatch_queued_jobs(user_id: int, limit: int) -> None:
                     location=job.location,
                     description=job.job_description,
                     candidate_profile=profile,
-                    candidate_name=job.candidate_name or "",
+                    candidate_name=profile.get("candidate_name", ""),
+                    gaps=list(job.gaps) + list(job.match_meta.get("must_have_missing", [])),
                 )
                 letter = cl.get("cover_letter", "")
                 if letter:
-                    update_cover_letter(job.id, letter)
+                    update_cover_letter(job.id, letter, letter_status=cl.get("status"),
+                                        subject_line=cl.get("subject_line"))
                     job = get_job_application(job.id)  # reload with the new letter
             except Exception as e:
                 log.warning("Lazy cover letter failed for #%d: %s", job.id, e)

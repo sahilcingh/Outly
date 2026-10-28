@@ -116,3 +116,29 @@ def load_profile(user_id: int | None = None) -> dict | None:
         except Exception:
             pass
     return None
+
+
+def apply_overrides(profile: dict, prefs: dict | None = None) -> dict:
+    """
+    Return the profile with manual overrides applied: the /experience and
+    candidate_name settings win over the resume, years fall back to the
+    configured default, and the seniority level is derived from the result.
+    Every consumer (matcher, cover letters, experience filter) should receive
+    this one object so they all see the same name / years / level.
+    """
+    from config import get_candidate_level, get_default_experience_years
+    from tools.seniority import level_from_years
+
+    prefs = prefs or {}
+    p = dict(profile or {})
+    years = prefs.get("experience_years")
+    if years is None:
+        years = p.get("experience_years")
+    if years is None:
+        years = get_default_experience_years()
+    p["experience_years"] = float(years)
+
+    name = str(prefs.get("candidate_name") or p.get("candidate_name") or "").strip()
+    p["candidate_name"] = "" if name.lower() == "candidate" else name
+    p["level"] = get_candidate_level() or level_from_years(p["experience_years"])
+    return p

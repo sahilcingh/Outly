@@ -14,27 +14,30 @@ import re
 
 # Checked most-specific first. Word "years"/"yrs" required so plain numbers
 # elsewhere in the description (salary, phone numbers) aren't misread.
-_RANGE    = re.compile(r"(\d{1,2})\s*(?:-|to|–)\s*(\d{1,2})\s*\+?\s*(?:years?|yrs?)\b", re.I)
-_PLUS     = re.compile(r"(\d{1,2})\s*\+\s*(?:years?|yrs?)\b", re.I)
-_AT_LEAST = re.compile(r"(?:minimum|min\.?|at\s*least)\s*(?:of\s*)?(\d{1,2})\s*(?:years?|yrs?)\b", re.I)
-_PLAIN    = re.compile(r"(\d{1,2})\s*\+?\s*(?:years?|yrs?)\s*(?:of\s*)?experience\b", re.I)
+_N = r"(\d{1,2}(?:\.\d+)?)"
+_Y = r"(?:years?|yrs?)"
+_RANGE    = re.compile(_N + r"\s*(?:-|to|–)\s*" + _N + r"\s*\+?\s*" + _Y + r"\b", re.I)
+_PLUS     = re.compile(_N + r"\s*\+\s*" + _Y + r"\b", re.I)
+_AT_LEAST = re.compile(r"(?:minimum|min\.?|at\s*least)\s*(?:of\s*)?" + _N + r"\s*\+?\s*" + _Y + r"\b", re.I)
+_PLAIN    = re.compile(_N + r"\s*" + _Y + r"['’]?\s*(?:of\s*)?experience\b", re.I)
 
 
-def extract_min_experience(description: str) -> int | None:
+_LABEL    = re.compile(r"\bexp(?:erience)?\s*[:\-]\s*" + _N + r"\s*\+?\s*" + _Y + r"\b", re.I)
+
+
+def extract_min_experience(description: str) -> float | None:
     """
     Best-effort extraction of the minimum years of experience a job
-    description asks for. Returns None when no explicit requirement is
-    found — ambiguous, so the caller should keep the listing rather than
-    guess (the title-based seniority filter and LLM scorer still apply).
+    description asks for ("1.5+ years", "2 to 4 years", "minimum of 2 years",
+    "3+ yrs"). Returns None when no explicit requirement is found — ambiguous,
+    so the caller should keep the listing rather than guess (the title-based
+    seniority filter and LLM scorer still apply).
     """
     text = description or ""
-    for pattern in (_RANGE, _PLUS, _AT_LEAST, _PLAIN):
+    for pattern in (_RANGE, _PLUS, _AT_LEAST, _PLAIN, _LABEL):
         m = pattern.search(text)
         if m:
-            try:
-                return int(m.group(1))
-            except (ValueError, IndexError):
-                continue
+            return float(m.group(1))
     return None
 
 

@@ -212,22 +212,71 @@ def get_block_internships() -> bool:
     return os.getenv("BLOCK_INTERNSHIPS", "true").strip().lower() != "false"
 
 
-def get_min_match_score(level: str | None = None) -> int:
+def resolve_min_score(level: str | None = None, override=None) -> tuple[int, str]:
     """
-    Minimum LLM match score (0-100) for a job to enter the queue. Enforces
-    strict résumé alignment — off-profile roles (incl. unrelated internships)
-    score below this and are dropped. MIN_MATCH_SCORE env override (default 55).
+    Effective minimum LLM match score (0-100) for a job to enter the queue,
+    plus where it came from (logged on every run).
 
-    Entry/junior candidates see far more (and noisier) postings than senior
-    ones, so a fresher/1-2yr candidate gets a higher bar by default —
-    MIN_MATCH_SCORE_ENTRY (default 68) — so only strong matches make the cut.
-    Pass the candidate's level to apply it; omit for the plain default.
+    Precedence: saved /minscore override > env var > default. Entry/junior use
+    MIN_MATCH_SCORE_ENTRY (default 60) and deliberately ignore the generic
+    MIN_MATCH_SCORE, which used to leak in and lower their bar. Others use
+    MIN_MATCH_SCORE (default 55).
     """
+    if override is not None:
+        try:
+            return max(0, min(100, int(override))), "saved /minscore preference"
+        except (TypeError, ValueError):
+            pass
     if level in ("entry", "junior"):
-        raw = os.getenv("MIN_MATCH_SCORE_ENTRY", os.getenv("MIN_MATCH_SCORE", "68"))
+        name, default = "MIN_MATCH_SCORE_ENTRY", 60
     else:
-        raw = os.getenv("MIN_MATCH_SCORE", "55")
+        name, default = "MIN_MATCH_SCORE", 55
+    raw = os.getenv(name, "").strip()
+    if raw:
+        try:
+            return max(0, min(100, int(raw))), f"env {name}"
+        except ValueError:
+            pass
+    return default, f"default ({level or 'any'})"
+
+
+def get_min_match_score(level: str | None = None) -> int:
+    return resolve_min_score(level)[0]
+
+
+def _env_list(name: str, default: list[str]) -> list[str]:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return [x.strip() for x in raw.split(";") if x.strip()]
+
+
+def get_preferred_locations() -> list[str]:
+    """Cities a job must be in (semicolon-separated PREFERRED_LOCATIONS env)."""
+    return _env_list("PREFERRED_LOCATIONS", ["bengaluru", "bangalore"])
+
+
+def allow_remote_india() -> bool:
+    """Also keep remote roles that are explicitly India-based (default True)."""
+    return os.getenv("ALLOW_REMOTE_INDIA", "true").strip().lower() != "false"
+
+
+def get_avoid_skills() -> list[str]:
+    """Skills a job must not require (semicolon-separated AVOID_SKILLS env)."""
+    return _env_list("AVOID_SKILLS", [
+        ".net", "c#", "azure", "workato", "salesforce", "sap", "embedded c",
+        "firmware", "plc", "matlab", "simulink", "power bi", "tableau", "alteryx",
+    ])
+
+
+def get_avoid_domains() -> list[str]:
+    """Role domains to skip (semicolon-separated AVOID_DOMAINS env)."""
+    return _env_list("AVOID_DOMAINS", ["data analyst", "bi analyst", "business analyst"])
+
+
+def get_default_experience_years() -> float:
+    """Fallback when neither the resume nor a /experience override gives years."""
     try:
-        return max(0, min(100, int(raw)))
+        return float(os.getenv("CANDIDATE_EXPERIENCE_YEARS", "1.5"))
     except ValueError:
-        return 68 if level in ("entry", "junior") else 55
+        return 1.5
