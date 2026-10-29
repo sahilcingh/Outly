@@ -153,23 +153,17 @@ def score_jobs_parallel(
     workers here just overlap network latency — the throttle serializes starts.
 
     - Jobs with no usable description are skipped (LinkedIn omits many): score 0.
-    - Jobs naming none of the candidate's skills are skipped: score 0.
     - Only the top `max_to_score` jobs by deterministic pre-score hit the LLM; the
       rest are returned unscored so a single search doesn't burn minutes or daily quota.
     """
     scoreable = [j for j in jobs if len((j.get("description") or "").strip()) > 100]
     no_desc   = [j for j in jobs if len((j.get("description") or "").strip()) <= 100]
 
-    # Deterministic pre-score: jobs naming none of the candidate's skills never
-    # reach the LLM, and the cap keeps the best pre-scored jobs (stable sort, so
-    # ties stay newest-first as LinkedIn returned them).
-    has_skills = bool(candidate_profile.get("skills"))
-    no_overlap, kept = [], []
+    # Deterministic pre-score only orders jobs: the cap keeps the best pre-scored
+    # ones (stable sort, so ties stay newest-first as LinkedIn returned them).
+    # It never drops a job on its own; literal skill matching is too brittle for that.
     for j in scoreable:
-        pre = prescore(j, candidate_profile)
-        j["prescore"] = pre["score"]
-        (no_overlap if has_skills and not pre["skill_hits"] else kept).append(j)
-    scoreable = kept
+        j["prescore"] = prescore(j, candidate_profile)["score"]
     scoreable.sort(key=lambda j: j["prescore"] or 0, reverse=True)
 
     to_score = scoreable[:max_to_score]
@@ -177,17 +171,12 @@ def score_jobs_parallel(
 
     if no_desc:
         log.info("Skipping %d jobs with missing/short descriptions", len(no_desc))
-    if no_overlap:
-        log.info("Skipping %d jobs sharing no skills with the candidate", len(no_overlap))
     if overflow:
         log.info("Capping scoring at %d jobs; %d left unscored this run",
                  max_to_score, len(overflow))
 
     for j in no_desc:
         j.update({"score": 0, "rationale": "No job description available.",
-                  "key_matches": [], "gaps": [], **_EMPTY})
-    for j in no_overlap:
-        j.update({"score": 0, "rationale": "None of the candidate's skills appear in the listing.",
                   "key_matches": [], "gaps": [], **_EMPTY})
     for j in overflow:
         j.update({"score": 0, "rationale": "Not scored (search cap reached).",
@@ -208,5 +197,5 @@ def score_jobs_parallel(
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
             scored = list(pool.map(_score_one, to_score))
 
-    all_jobs = scored + overflow + no_overlap + no_desc
+    all_jobs = scored + overflow + no_desc
     return sorted(all_jobs, key=lambda j: j.get("score", 0), reverse=True)

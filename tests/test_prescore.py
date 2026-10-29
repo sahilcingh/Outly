@@ -44,13 +44,26 @@ def test_over_level_and_off_role_score_low():
     assert p["score"] < 20
 
 
-def test_matcher_skips_no_overlap_and_ranks_by_prescore(monkeypatch):
+@pytest.mark.parametrize("skill,text", [
+    ("Node.js/Express", "Backend in Node and Express with MongoDB"),
+    ("HTML/CSS", "Solid CSS skills"),
+    ("REST APIs", "Design a REST API"),
+    ("JavaScript (ES6+)", "Modern JavaScript"),
+    ("C/C++", "Systems work in C++"),
+])
+def test_compound_resume_skills_match_their_parts(skill, text):
+    assert skill_hits(text, [skill]) == 1
+
+
+def test_matcher_ranks_by_prescore_and_never_drops_without_llm(monkeypatch):
     sent = []
     monkeypatch.setattr(matcher, "score_job", lambda **k: sent.append(k["job_title"]) or {"score": 70})
     weak = {"title": "Data Analyst", "description": "Requirements:\n- Excel, Python\n" + "x" * 120}
     none = {"title": "Sales Executive", "description": "Cold calling and CRM " + "x" * 120}
-    out = matcher.score_jobs_parallel([weak, none, dict(GOOD)], PROFILE, max_workers=1, max_to_score=1)
-    assert sent == ["Backend Developer"]               # best pre-score wins the single LLM slot
+    out = matcher.score_jobs_parallel([none, weak, dict(GOOD)], PROFILE, max_workers=1, max_to_score=2)
+    assert sent == ["Backend Developer", "Data Analyst"]   # best pre-scores get the LLM slots
     by_title = {j["title"]: j for j in out}
-    assert by_title["Sales Executive"]["score"] == 0 and "None of the candidate" in by_title["Sales Executive"]["rationale"]
-    assert by_title["Data Analyst"]["rationale"].startswith("Not scored")
+    assert by_title["Sales Executive"]["rationale"].startswith("Not scored")  # ranked last, not rejected
+    sent.clear()
+    matcher.score_jobs_parallel([dict(none)], PROFILE, max_workers=1)
+    assert sent == ["Sales Executive"]                     # zero skill overlap still reaches the LLM
