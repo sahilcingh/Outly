@@ -38,9 +38,19 @@ _STRONG_VOCAB = {f for c, v in _ALIASES.items() for f in {c, *v}} - _AMBIGUOUS
 
 
 def _forms(skill: str) -> set[str]:
+    """Spellings to look for. Resume skills are often compound ("Node.js/Express",
+    "HTML, CSS", "REST APIs"), so each part counts on its own too."""
     s = skill.lower().strip()
-    canon = next((c for c, v in _ALIASES.items() if s == c or s in v), s)
-    return {canon, *_ALIASES.get(canon, ())}
+    parts = {p.strip() for p in re.split(r"[/,&()]|\band\b", s)}
+    forms = set()
+    for p in {s} | {p for p in parts if len(p) > 2 or p in _STRONG_VOCAB | _AMBIGUOUS}:
+        if not p:
+            continue
+        canon = next((c for c, v in _ALIASES.items() if p == c or p in v), p)
+        forms |= {canon, *_ALIASES.get(canon, ())}
+        if " " in p and p.endswith("s"):  # "rest apis" -> "rest api"
+            forms.add(p[:-1])
+    return forms
 
 
 def skill_hits(text: str, skills: list[str]) -> int:
