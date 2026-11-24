@@ -136,9 +136,13 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     # search internships and apprenticeships (broad India location only).
     pairs = [(base_query, loc) for loc in locations]
     broad_loc = locations[-1] if locations else "India"
+    # Big employers rarely put "junior"/"entry level" in titles — search the
+    # plain role too, or they barely show up.
+    if base_query != target_roles[0]:
+        pairs += [(target_roles[0], loc) for loc in locations]
     if len(target_roles) > 1:
         pairs.append((search_query_for_level(target_roles[1], level), broad_loc))
-    if level in ("entry", "junior"):
+    if level in ("entry", "junior") and not get_block_internships():
         for kw in get_extra_job_keywords():
             pairs.append((f"{target_roles[0]} {kw}", broad_loc))
 
@@ -240,6 +244,11 @@ def _search_and_queue(profile: dict, limit: int) -> None:
     scored = [j for j in scored if j.get("score", 0) >= min_score]
     _log_drop(f"score<{min_score}", before, len(scored))
 
+    # Only well-known employers: the scorer flags agencies/unknown/scam-looking ones.
+    before = len(scored)
+    scored = [j for j in scored if j.get("reputable")]
+    _log_drop("not-reputable", before, len(scored))
+
     # The matcher read the whole requirements section: drop what asks for more
     # years than the candidate has.
     before = len(scored)
@@ -257,8 +266,8 @@ def _search_and_queue(profile: dict, limit: int) -> None:
 
     if not scored:
         send_message(
-            f"ℹ️ Found new {level}-level jobs, but none matched your "
-            f"résumé strongly enough (score ≥ {min_score}) this round."
+            f"ℹ️ Found new {level}-level jobs, but none were from a reputed "
+            f"company and matched your résumé (score ≥ {min_score}) this round."
         )
         _dispatch_queued_jobs(user_id, limit)
         return

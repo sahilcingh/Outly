@@ -48,7 +48,7 @@ def env(monkeypatch):
             out = []
             for j in job_dicts:
                 extra = scores.get(j["title"], {"score": 0})
-                out.append({**j, "rationale": "", "key_matches": [], "gaps": [], **extra})
+                out.append({**j, "reputable": True, "rationale": "", "key_matches": [], "gaps": [], **extra})
             return out
 
         def fake_letter(**kw):
@@ -108,3 +108,9 @@ def test_logs_effective_min_score_and_source(env, caplog):
     caplog.set_level(logging.INFO)
     env([L("Dev B")], {"Dev B": {"score": 70}})
     assert any("Effective min_score=60 (source: default (junior))" in r.message for r in caplog.records)
+
+
+def test_non_reputable_company_dropped(env):
+    state = env([L("Big Co Dev"), L("Agency Dev")],
+                {"Big Co Dev": {"score": 80}, "Agency Dev": {"score": 90, "reputable": False}})
+    assert [s["job_title"] for s in state["saved"]] == ["Big Co Dev"]

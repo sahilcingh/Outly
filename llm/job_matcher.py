@@ -53,8 +53,17 @@ MUST-HAVE RULE (critical): if ANY must-have / required (NOT nice-to-have, prefer
 skill is missing from the candidate's skills, CAP the score at {must_have_cap}. List those skills in
 "must_have_missing". Only judge against the candidate's skills listed above.
 
+COMPANY CHECK: set "reputable" to true ONLY if the employer is a well-known,
+established company — an MNC, a listed company, a recognized product/tech
+company, or a well-known funded startup (e.g. Visa, PhonePe, Rubrik, GitLab,
+Target, ZEISS, American Express, IBM). Set it to false for staffing/recruiting
+agencies, job aggregators, or postings "for a client"; small unknown firms;
+training institutes; anything asking for fees or deposits, offering only a
+stipend, or with vague, generic, too-good-to-be-true text. If unsure, false.
+
 Return exactly this JSON:
 {{
+  "reputable": <true|false>,
   "score": <integer 0-100>,
   "rationale": "<2-3 sentences explaining the score, mention seniority fit>",
   "key_matches": ["<skill or requirement that aligns>", ...],
@@ -114,7 +123,8 @@ def score_job(
         # a tight max_tokens keeps each call's declared token demand low, which
         # matters a lot here since a single search can fire up to max_to_score
         # of these back to back against Groq's per-minute token budget.
-        raw = groq_json_call(system=_SYSTEM, user=prompt, label="job_matcher", max_tokens=600)
+        raw = groq_json_call(system=_SYSTEM, user=prompt, label="job_matcher", max_tokens=600,
+                              temperature=0)  # same job → same score every run
         result = _json.loads(raw) if isinstance(raw, str) else raw
         score = max(0, min(100, int(result.get("score", 0))))
         missing = [str(x) for x in (result.get("must_have_missing") or [])][:6]
@@ -126,6 +136,7 @@ def score_job(
             min_years = None
         model = str(result.get("work_model") or "").strip().lower()
         return {
+            "reputable":   result.get("reputable") is True,
             "score":       score,
             "required_min_years": min_years,
             "work_location":      str(result.get("work_location") or "")[:100],
@@ -144,7 +155,7 @@ def score_jobs_parallel(
     jobs: list[dict],
     candidate_profile: dict,
     max_workers: int = 4,
-    max_to_score: int = 20,
+    max_to_score: int = 30,
 ) -> list[dict]:
     """
     Score job dicts against the candidate profile.

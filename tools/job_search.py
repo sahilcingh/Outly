@@ -244,7 +244,7 @@ def filter_by_geo(listings: list[JobListing]) -> tuple[list[JobListing], int]:
     return kept, len(listings) - len(kept)
 
 
-_INTERN_PATTERN = re.compile(r"\b(intern|internship)\b", re.IGNORECASE)
+_INTERN_PATTERN = re.compile(r"\b(intern|internship|trainee|apprentice|apprenticeship)\b", re.IGNORECASE)
 
 
 def filter_intern_roles(listings: list[JobListing]) -> tuple[list[JobListing], int]:
